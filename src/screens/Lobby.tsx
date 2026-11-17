@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bot, Check, CheckCircle2, Copy, Crown, Play, Plus, ShieldCheck, Users, Wifi } from 'lucide-react';
-import { useEffect } from 'react';
+import { Bot, Check, CheckCircle2, Copy, Crown, Eye, Play, Plus, ShieldCheck, Users, Wifi } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
 import { CharacterAvatar, ConnectionDot, CopyPinButton, getMap, Pill, ScreenHeader } from '../components/ui';
 import { gameServer } from '../engine/gameServer';
 import { useGameStore } from '../store/gameStore';
@@ -31,8 +31,13 @@ export function Lobby() {
 
   const isHost = auth.role === 'host';
   const map = getMap(room.map_id);
-  const allReady = players.length >= 2 && players.every((p) => p.is_ready);
-  const myPlayer = players.find((p) => p.id === auth.player_id);
+  
+  // Filter: only non-spectator players are actual game players
+  const gamePlayers = useMemo(() => players.filter(p => !p.is_spectator), [players]);
+  const spectators = useMemo(() => players.filter(p => p.is_spectator), [players]);
+  const allReady = gamePlayers.length >= 2 && gamePlayers.every((p) => p.is_ready);
+  const myPlayer = gamePlayers.find((p) => p.id === auth.player_id);
+  const isSpectator = auth.role === 'host' || spectators.some(s => s.id === auth.player_id);
 
   function toggleReady() {
     if (!myPlayer) return;
@@ -75,7 +80,9 @@ export function Lobby() {
       <ScreenHeader
         eyebrow="Lobby / Menunggu Pemain"
         title={room.name}
-        subtitle="Bagikan kode PIN kepada teman. Pastikan semua pemain berstatus Siap sebelum host memulai permainan."
+        subtitle={isHost 
+          ? 'Kamu sebagai Host (Pengamat). Bagikan kode PIN, atur peta, dan mulai permainan saat semua pemain siap.'
+          : 'Bagikan kode PIN kepada teman. Pastikan semua pemain berstatus Siap sebelum host memulai permainan.'}
         onBack={() => {
           useGameStore.getState().resetSession();
         }}
@@ -105,21 +112,21 @@ export function Lobby() {
             </div>
           </motion.section>
 
-          {/* Player list */}
+          {/* Player list - Game Players */}
           <section className="board-card rounded-2xl p-5">
             <div className="mb-4 flex items-center justify-between border-b border-slate-200 pb-3">
               <div className="flex items-center gap-2">
                 <Users size={19} className="text-sky-700" />
-                <h2 className="font-display text-lg font-bold text-slate-900">Daftar Pemain</h2>
+                <h2 className="font-display text-lg font-bold text-slate-900">Pemain ({gamePlayers.length}/{room.max_players})</h2>
               </div>
               <Pill tone="sky">
-                {players.length}/{room.max_players} Pemain
+                {gamePlayers.length}/{room.max_players} Pemain
               </Pill>
             </div>
 
             <div className="space-y-2.5">
               <AnimatePresence>
-                {players.map((p, idx) => {
+                {gamePlayers.map((p, idx) => {
                   const char = getCharSafe(p.character_id);
                   return (
                     <motion.div
@@ -169,7 +176,7 @@ export function Lobby() {
               </AnimatePresence>
             </div>
 
-            {players.length < room.max_players && (
+            {gamePlayers.length < room.max_players && (
               <button
                 onClick={handleAddBot}
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 py-2.5 text-xs font-bold text-slate-600 hover:border-amber-400 hover:text-amber-700"
@@ -178,15 +185,54 @@ export function Lobby() {
               </button>
             )}
           </section>
+
+          {/* Spectators list (Host + other observers) */}
+          {spectators.length > 0 && (
+            <section className="board-card rounded-2xl p-5">
+              <div className="mb-4 flex items-center gap-2 border-b border-slate-200 pb-3">
+                <Eye size={19} className="text-amber-600" />
+                <h2 className="font-display text-lg font-bold text-slate-900">Pengamat ({spectators.length})</h2>
+              </div>
+              <div className="space-y-2">
+                <AnimatePresence>
+                  {spectators.map((p) => (
+                    <motion.div
+                      key={p.id}
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 12 }}
+                      className="flex items-center gap-3 rounded-xl border border-slate-200 bg-amber-50/50 p-2"
+                    >
+                      <div className="relative">
+                        <CharacterAvatar characterId={p.character_id} size="md" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-extrabold text-slate-900">{p.nickname}</span>
+                          {p.id === auth.player_id && (
+                            <span className="rounded bg-amber-200 px-1.5 py-0.5 text-[9px] font-bold text-amber-900">KAMU (Host)</span>
+                          )}
+                          <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">
+                            <Eye size={9} /> PENGAMAT
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500">{getCharSafe(p.character_id)}</div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            </section>
+          )}
         </div>
 
         <div className="space-y-5">
-          {/* Host controls */}
+          {/* Host controls / Player ready */}
           <section className="board-card rounded-2xl p-5">
             <div className="mb-4 flex items-center gap-2 border-b border-slate-200 pb-3">
               {isHost ? <Crown size={19} className="text-amber-600" /> : <ShieldCheck size={19} className="text-slate-600" />}
               <h2 className="font-display text-lg font-bold text-slate-900">
-                {isHost ? 'Kontrol Host' : 'Status Kesiapan'}
+                {isHost ? 'Kontrol Host' : isSpectator ? 'Mode Pengamat' : 'Status Kesiapan'}
               </h2>
             </div>
 
@@ -195,12 +241,12 @@ export function Lobby() {
                 <div className="rounded-xl bg-slate-100 p-3">
                   <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Syarat Memulai</div>
                   <ul className="mt-2 space-y-1.5 text-xs">
-                    <li className={`flex items-center gap-2 ${players.length >= 2 ? 'text-emerald-700' : 'text-slate-500'}`}>
-                      {players.length >= 2 ? <Check size={14} /> : <span className="h-3.5 w-3.5 rounded-full border-2 border-slate-300" />}
-                      Minimal 2 pemain bergabung
+                    <li className={`flex items-center gap-2 ${gamePlayers.length >= 2 ? 'text-emerald-700' : 'text-slate-500'}`}>
+                      {gamePlayers.length >= 2 ? <Check size={14} /> : <span className="h-3.5 w-3.5 rounded-full border-2 border-slate-300" />}
+                      Minimal 2 pemain bergabung ({gamePlayers.length}/2+)
                     </li>
-                    <li className={`flex items-center gap-2 ${allReady && players.length >= 2 ? 'text-emerald-700' : 'text-slate-500'}`}>
-                      {allReady && players.length >= 2 ? (
+                    <li className={`flex items-center gap-2 ${allReady && gamePlayers.length >= 2 ? 'text-emerald-700' : 'text-slate-500'}`}>
+                      {allReady && gamePlayers.length >= 2 ? (
                         <Check size={14} />
                       ) : (
                         <span className="h-3.5 w-3.5 rounded-full border-2 border-slate-300" />
@@ -219,6 +265,16 @@ export function Lobby() {
                   <Play size={18} fill="currentColor" /> Mulai Permainan
                 </motion.button>
               </>
+            ) : isSpectator ? (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-center">
+                <div className="flex items-center justify-center gap-2 text-amber-800 mb-2">
+                  <Eye size={20} />
+                  <span className="font-bold">Mode Pengamat Aktif</span>
+                </div>
+                <p className="text-sm text-slate-700">
+                  Kamu mengamati permainan ini. Host akan memulai saat semua pemain siap.
+                </p>
+              </div>
             ) : (
               <>
                 <div className="mb-3 rounded-xl bg-slate-100 p-3 text-xs leading-relaxed text-slate-600">

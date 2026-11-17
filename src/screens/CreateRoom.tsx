@@ -44,7 +44,7 @@ export function CreateRoom() {
   function handleCreate() {
     setSubmitting(true);
     try {
-      const { room, hostPlayer } = gameServer.createRoom({
+      const { room, hostSpectator } = gameServer.createRoom({
         room_name: roomName,
         host_nickname: hostNickname,
         map_id: mapId,
@@ -58,8 +58,8 @@ export function CreateRoom() {
         role: 'host',
         room_code: room.code,
         token: room.host_token,
-        player_id: hostPlayer.id,
-        nickname: hostPlayer.nickname,
+        player_id: hostSpectator.id,
+        nickname: hostSpectator.nickname,
       });
       refreshRoom();
       pushToast(`Room berhasil dibuat! Kode PIN: ${room.code}`, 'success');

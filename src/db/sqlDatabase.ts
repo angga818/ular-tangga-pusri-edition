@@ -138,6 +138,7 @@ export function initSqlDatabase() {
       current_turn INT,
       current_player_id STRING,
       turn_state_json STRING,
+      spectator_ids_json STRING,
       created_at STRING
     );
   `);
@@ -156,6 +157,7 @@ export function initSqlDatabase() {
       is_ready BOOLEAN,
       is_connected BOOLEAN,
       is_bot BOOLEAN,
+      is_spectator BOOLEAN,
       joined_at STRING
     );
   `);
@@ -439,6 +441,7 @@ function mapRowToRoom(r: Record<string, unknown>): Room {
     current_turn: Number(r.current_turn),
     current_player_id: r.current_player_id ? String(r.current_player_id) : null,
     turn_state: JSON.parse(String(r.turn_state_json)) as ActiveTurnState,
+    spectator_ids: JSON.parse(String(r.spectator_ids_json || '[]')),
     created_at: String(r.created_at),
   };
 }
@@ -457,6 +460,7 @@ function mapRowToPlayer(r: Record<string, unknown>): Player {
     is_ready: Boolean(r.is_ready),
     is_connected: Boolean(r.is_connected),
     is_bot: Boolean(r.is_bot),
+    is_spectator: Boolean(r.is_spectator),
     joined_at: String(r.joined_at),
   };
 }
@@ -515,6 +519,7 @@ export function sqlCreateRoom(params: {
       current_turn: 0,
       current_player_id: '',
       turn_state_json: JSON.stringify(initialTurnState),
+      spectator_ids_json: '[]',
       created_at,
     },
   ]);
@@ -535,6 +540,7 @@ export function sqlCreateRoom(params: {
     current_turn: 0,
     current_player_id: null,
     turn_state: initialTurnState,
+    spectator_ids: [],
     created_at,
   };
 }
@@ -576,6 +582,7 @@ export function sqlAddPlayer(params: {
   character_id: string;
   is_bot?: boolean;
   is_ready?: boolean;
+  is_spectator?: boolean;
 }): Player {
   initSqlDatabase();
   const id = `player_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -595,6 +602,7 @@ export function sqlAddPlayer(params: {
     is_ready: params.is_ready ?? false,
     is_connected: true,
     is_bot: params.is_bot ?? false,
+    is_spectator: params.is_spectator ?? false,
     joined_at,
   };
 
@@ -612,6 +620,7 @@ export function sqlAddPlayer(params: {
       is_ready: player.is_ready,
       is_connected: player.is_connected,
       is_bot: player.is_bot,
+      is_spectator: player.is_spectator,
       joined_at: player.joined_at,
     },
   ]);
@@ -622,7 +631,7 @@ export function sqlAddPlayer(params: {
 export function sqlUpdatePlayer(player: Player) {
   initSqlDatabase();
   alasql(
-    'UPDATE players SET position = ?, score = ?, correct_answers = ?, total_answer_time_ms = ?, is_ready = ?, is_connected = ? WHERE id = ?',
+    'UPDATE players SET position = ?, score = ?, correct_answers = ?, total_answer_time_ms = ?, is_ready = ?, is_connected = ?, is_spectator = ? WHERE id = ?',
     [
       player.position,
       player.score,
@@ -630,6 +639,7 @@ export function sqlUpdatePlayer(player: Player) {
       player.total_answer_time_ms,
       player.is_ready,
       player.is_connected,
+      player.is_spectator,
       player.id,
     ]
   );

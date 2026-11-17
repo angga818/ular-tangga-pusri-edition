@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Clock3,
   Dices,
+  Eye,
   Home,
   Lightbulb,
   Sparkles,
@@ -43,9 +44,10 @@ export function GameScreen() {
   const [showResultOverlay, setShowResultOverlay] = useState(false);
 
   const myPlayer = players.find((p) => p.id === auth?.player_id);
+  const isSpectator = myPlayer?.is_spectator || auth?.role === 'host';
   const map = getMap(room?.map_id || '');
   const currentPlayer = players.find((p) => p.id === room?.current_player_id);
-  const isMyTurn = currentPlayer?.id === auth?.player_id;
+  const isMyTurn = currentPlayer?.id === auth?.player_id && !isSpectator;
 
   const question = room?.status === 'QUESTION' ? room.turn_state.active_question : null;
   const answerResult = room?.turn_state.last_answer_result;
@@ -167,8 +169,27 @@ export function GameScreen() {
   const canRoll = room.status === 'TURN_START' && isMyTurn;
   const canAnswer = room.status === 'QUESTION' && isMyTurn && !room.turn_state.answered_option_id && countdown > 0;
 
+  // Spectator info banner
+  if (isSpectator && myPlayer) {
+    // Spectators still see the board but with a banner
+  }
+
   return (
     <div className="mx-auto max-w-[1600px] px-3 py-5 sm:px-5">
+      {/* Spectator banner */}
+      {isSpectator && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 flex items-center gap-2 rounded-xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-center"
+        >
+          <Eye size={18} className="text-amber-600 shrink-0" />
+          <div className="text-sm font-bold text-amber-800">
+            Mode Pengamat — Kamu menonton permainan ini. Hanya pemain yang bisa melempar dadu & menjawab.
+          </div>
+        </motion.div>
+      )}
+
       {/* Top bar */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -192,8 +213,8 @@ export function GameScreen() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Pill tone={room.status === 'GAME_OVER' ? 'violet' : isMyTurn ? 'amber' : 'slate'}>
-            {isMyTurn ? '★ Giliran Kamu' : `Giliran ${currentPlayer?.nickname || '-'}`}
+          <Pill tone={room.status === 'GAME_OVER' ? 'violet' : isMyTurn ? 'amber' : isSpectator ? 'amber' : 'slate'}>
+            {isSpectator ? `👁 Mengamati: ${currentPlayer?.nickname || '-'}` : isMyTurn ? '★ Giliran Kamu' : `Giliran ${currentPlayer?.nickname || '-'}`}
           </Pill>
           <Pill tone="slate">
             <Clock3 size={11} /> {statusLabel[room.status]}
@@ -399,7 +420,11 @@ export function GameScreen() {
                   <div>
                     <div className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-violet-700">Pertanyaan</div>
                     <div className="text-xs font-bold text-slate-700">
-                      {isMyTurn ? 'Giliranmu — pilih satu jawaban!' : `${currentPlayer?.nickname} sedang menjawab...`}
+                      {isSpectator
+                        ? 'Mode pengamat — menonton pemain menjawab...'
+                        : isMyTurn
+                        ? 'Giliranmu — pilih satu jawaban!'
+                        : `${currentPlayer?.nickname} sedang menjawab...`}
                     </div>
                   </div>
                 </div>
@@ -432,7 +457,7 @@ export function GameScreen() {
 
               <div className="mt-5 grid gap-2.5 sm:grid-cols-2">
                 {question.options.map((opt, idx) => {
-                  const disabled = !canAnswer || Boolean(room.turn_state.answered_option_id);
+                  const disabled = !canAnswer || Boolean(room.turn_state.answered_option_id) || isSpectator;
                   const isSelected = room.turn_state.answered_option_id === opt.id;
                   return (
                     <motion.button
@@ -460,9 +485,14 @@ export function GameScreen() {
                 })}
               </div>
 
-              {!isMyTurn && (
+              {!isMyTurn && !isSpectator && (
                 <div className="mt-5 flex items-center justify-center gap-2 rounded-xl bg-slate-100 p-3 text-xs font-semibold text-slate-600">
                   <Lightbulb size={15} className="text-amber-500" /> Menunggu jawaban pemain yang sedang bergiliran...
+                </div>
+              )}
+              {isSpectator && (
+                <div className="mt-5 flex items-center justify-center gap-2 rounded-xl bg-amber-50 p-3 text-xs font-semibold text-amber-700">
+                  <Eye size={15} className="text-amber-500" /> Menonton {currentPlayer?.nickname || 'pemain'} menjawab...
                 </div>
               )}
               {isMyTurn && countdown <= 5 && countdown > 0 && (

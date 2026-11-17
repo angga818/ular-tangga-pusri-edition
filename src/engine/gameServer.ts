@@ -119,7 +119,7 @@ class AuthoritativeGameServer {
     question_set_id: string | null;
     categories: QuestionCategory[];
     turn_time_limit_sec: number;
-  }): { room: Room; hostPlayer: Player } {
+  }): { room: Room; hostSpectator: Player } {
     if (!params.room_name.trim()) throw new Error('Nama room wajib diisi.');
     if (params.max_players < 2 || params.max_players > 8) {
       throw new Error('Maksimal pemain harus antara 2 dan 8.');
@@ -151,17 +151,22 @@ class AuthoritativeGameServer {
 
     const room = sqlCreateRoom(params);
 
-    // Host adalah pemain pertama di room dan otomatis berstatus siap.
-    const hostPlayer = sqlAddPlayer({
+    // Host bergabung sebagai SPECTATOR (pengamat), bukan pemain.
+    const hostSpectator = sqlAddPlayer({
       room_code: room.code,
       nickname: params.host_nickname.trim() || 'Host',
       character_id: CHARACTERS[0].id,
       is_bot: false,
       is_ready: true,
+      is_spectator: true,
     });
 
+    // Add to room's spectator_ids
+    room.spectator_ids = [hostSpectator.id];
+    sqlSaveRoom(room);
+
     this.emit('ROOM_STATE', { room_code: room.code, status: room.status });
-    return { room, hostPlayer };
+    return { room, hostSpectator };
   }
 
   joinRoom(params: {
@@ -177,7 +182,7 @@ class AuthoritativeGameServer {
       throw new Error('Kode PIN room harus terdiri dari 6 digit angka.');
     }
     if (nickname.length < 1 || nickname.length > 20) {
-      throw new Error('Nickname wajib diisi (1–20 karakter).');
+      throw new Error('Nickname wajib diisi (1–20 karakter).')
     }
 
     const room = sqlGetRoom(code);
@@ -188,7 +193,8 @@ class AuthoritativeGameServer {
       throw new Error('ROOM_ALREADY_STARTED: Permainan di room ini sudah dimulai.');
     }
 
-    const players = sqlGetPlayers(code);
+    // Count only non-spectator players
+    const players = sqlGetPlayers(code).filter(p => !p.is_spectator);
     if (players.length >= room.max_players) {
       throw new Error('ROOM_FULL: Kapasitas room sudah penuh.');
     }
@@ -205,10 +211,54 @@ class AuthoritativeGameServer {
       character_id: params.character_id,
       is_bot: false,
       is_ready: false,
+      is_spectator: false,
     });
 
     this.emit('PLAYER_JOINED', { room_code: code, player });
     return { player, room };
+  }
+
+  /** Host/observer join as spectator (no player token needed for game actions) */
+  spectateRoom(params: {
+    room_code: string;
+    nickname: string;
+  }): { spectator: Player; room: Room } {
+    reloadSqlFromStorage();
+    const code = params.room_code.trim();
+    const nickname = params.nickname.trim() || 'Pengamat';
+
+    if (!/^\d{6}$/.test(code)) {
+      throw new Error('Kode PIN room harus terdiri dari 6 digit angka.');
+    }
+
+    const room = sqlGetRoom(code);
+    if (!room) {
+      throw new Error('NOT_FOUND: Room tidak ditemukan.');
+    }
+
+    // Check if already spectating
+    const existing = sqlGetPlayers(code).find(p => p.is_spectator && p.nickname.toLowerCase() === nickname.toLowerCase());
+    if (existing) {
+      return { spectator: existing, room };
+    }
+
+    const spectator = sqlAddPlayer({
+      room_code: code,
+      nickname,
+      character_id: CHARACTERS[0].id,
+      is_bot: false,
+      is_ready: true,
+      is_spectator: true,
+    });
+
+    // Add to room's spectator_ids
+    if (!room.spectator_ids.includes(spectator.id)) {
+      room.spectator_ids = [...room.spectator_ids, spectator.id];
+      sqlSaveRoom(room);
+    }
+
+    this.emit('PLAYER_JOINED', { room_code: code, player: spectator });
+    return { spectator, room };
   }
 
   addBotPlayer(room_code: string): Player {
@@ -280,7 +330,8 @@ class AuthoritativeGameServer {
     if (room.host_token !== host_token) throw new Error('UNAUTHORIZED: Hanya host yang dapat memulai.');
     if (room.status !== 'LOBBY') throw new Error('Permainan sudah berlangsung.');
 
-    const players = sqlGetPlayers(room_code);
+    // Only count non-spectator players
+    const players = sqlGetPlayers(room_code).filter(p => !p.is_spectator);
     if (players.length < 2) {
       throw new Error('Minimal 2 pemain harus bergabung untuk memulai permainan.');
     }
@@ -329,7 +380,7 @@ class AuthoritativeGameServer {
   private maybeTriggerBotTurn(room_code: string) {
     const room = sqlGetRoom(room_code);
     if (!room || room.status !== 'TURN_START' || !room.current_player_id) return;
-    const players = sqlGetPlayers(room_code);
+    const players = sqlGetPlayers(room_code).filter(p => !p.is_spectator);
     const current = players.find((p) => p.id === room.current_player_id);
     if (!current || !current.is_bot) return;
 
@@ -766,7 +817,8 @@ class AuthoritativeGameServer {
     reloadSqlFromStorage();
     const room = sqlGetRoom(room_code);
     if (!room || room.status === 'GAME_OVER') return;
-    const players = sqlGetPlayers(room_code);
+    // Only non-spectator players participate in turn rotation
+    const players = sqlGetPlayers(room_code).filter(p => !p.is_spectator);
     if (players.length === 0) return;
 
     const currentIdx = players.findIndex((p) => p.id === room.current_player_id);
@@ -868,7 +920,8 @@ class AuthoritativeGameServer {
   }
 
   computeLeaderboard(room_code: string, explicitWinnerId?: string): LeaderboardEntry[] {
-    const players = sqlGetPlayers(room_code);
+    // Only include non-spectator players in leaderboard
+    const players = sqlGetPlayers(room_code).filter(p => !p.is_spectator);
     // Sort: reached 100 winner first (if finished), then score DESC, correct_answers DESC, total_answer_time_ms ASC (PRD 3.5)
     const sorted = [...players].sort((a, b) => {
       if (explicitWinnerId) {

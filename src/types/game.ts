@@ -114,6 +114,7 @@ export interface Player {
   is_ready: boolean;
   is_connected: boolean;
   is_bot: boolean;
+  is_spectator: boolean;
   joined_at: string;
 }
 
@@ -165,6 +166,7 @@ export interface Room {
   current_turn: number;
   current_player_id: string | null;
   turn_state: ActiveTurnState;
+  spectator_ids: string[];
   created_at: string;
 }
 
