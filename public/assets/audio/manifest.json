@@ -1,7 +1,11 @@
 {
   "default": {
     "label": "BGM Utama — Ular Tangga PUSRI",
-    "src": ["/assets/audio/background-music.wav"],
+    "src": [
+      "/assets/audio/background-music.mp3",
+      "/assets/audio/background-music.ogg",
+      "/assets/audio/background-music.wav"
+    ],
     "loop": true,
     "volume": 0.32
   },

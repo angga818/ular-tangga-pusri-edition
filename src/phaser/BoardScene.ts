@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import { CHARACTERS, getTilePercentPosition } from '../data/mapsAndChars';
 import { GameStatus, MapTheme, Player } from '../types/game';
+import { BOARD_HEIGHT, BOARD_WIDTH } from './boardDimensions';
 
-export const BOARD_WIDTH = 1200;
-export const BOARD_HEIGHT = 896;
+export { BOARD_HEIGHT, BOARD_WIDTH } from './boardDimensions';
 
 export interface PhaserMovementTarget {
   player_id: string;

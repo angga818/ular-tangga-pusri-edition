@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -50,6 +51,35 @@ func Close() {
 func RunMigrations() error {
 	ctx := context.Background()
 	migrations := []string{
+		// 0. generator UUID (gen_random_uuid())
+		`CREATE EXTENSION IF NOT EXISTS pgcrypto;`,
+
+		// Maps & Characters (dipakai handler saat create/join room)
+		`CREATE TABLE IF NOT EXISTS maps (
+			id VARCHAR(50) PRIMARY KEY,
+			name VARCHAR(100) NOT NULL,
+			title_id VARCHAR(100),
+			subtitle VARCHAR(150),
+			description TEXT,
+			image_url TEXT NOT NULL,
+			accent_color VARCHAR(20),
+			badge_bg VARCHAR(40),
+			features JSONB NOT NULL DEFAULT '[]',
+			snakes JSONB NOT NULL DEFAULT '[]',
+			ladders JSONB NOT NULL DEFAULT '[]',
+			is_active BOOLEAN NOT NULL DEFAULT TRUE
+		);`,
+		`CREATE TABLE IF NOT EXISTS characters (
+			id VARCHAR(50) PRIMARY KEY,
+			name VARCHAR(100) NOT NULL,
+			role VARCHAR(100),
+			tagline TEXT,
+			image_url TEXT NOT NULL,
+			avatar_url TEXT NOT NULL,
+			accent_color VARCHAR(20),
+			is_active BOOLEAN NOT NULL DEFAULT TRUE
+		);`,
+
 		// 1. Rooms table
 		`CREATE TABLE IF NOT EXISTS rooms (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -357,20 +387,25 @@ func SeedQuestions() error {
 	}
 
 	for _, q := range questions {
-		// Build options JSON
-		optionsJSON := "["
-		for i, opt := range q.Options {
-			if i > 0 {
-				optionsJSON += ","
-			}
-			optionsJSON += fmt.Sprintf(`{"id":"%s","text":"%s"}`, opt.ID, opt.Text)
+		// Build options JSON dengan encoder (aman untuk tanda kutip & unicode).
+		type seedOption struct {
+			ID   string `json:"id"`
+			Text string `json:"text"`
 		}
-		optionsJSON += "]"
+		opts := make([]seedOption, 0, len(q.Options))
+		for _, opt := range q.Options {
+			opts = append(opts, seedOption{ID: opt.ID, Text: opt.Text})
+		}
+		optionsBytes, err := json.Marshal(opts)
+		if err != nil {
+			log.Error().Err(err).Str("question", q.Text).Msg("Failed to encode options")
+			continue
+		}
 
-		_, err := Pool.Exec(ctx, `
+		_, err = Pool.Exec(ctx, `
 			INSERT INTO questions (question_text, category, difficulty, time_limit_sec, options, correct_option_id, explanation, is_active)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-		`, q.Text, q.Category, q.Difficulty, q.TimeLimit, optionsJSON, q.CorrectID, q.Explanation)
+		`, q.Text, q.Category, q.Difficulty, q.TimeLimit, string(optionsBytes), q.CorrectID, q.Explanation)
 		if err != nil {
 			log.Error().Err(err).Str("question", q.Text).Msg("Failed to seed question")
 			continue
@@ -378,5 +413,56 @@ func SeedQuestions() error {
 	}
 
 	log.Info().Int("count", len(questions)).Msg("Questions seeded")
+	return nil
+}
+
+// SeedMapsAndCharacters mengisi tabel referensi yang divalidasi handler saat
+// membuat room dan memilih karakter. Aman dijalankan berulang kali.
+func SeedMapsAndCharacters() error {
+	ctx := context.Background()
+
+	maps := []struct {
+		ID, Name, TitleID, Subtitle, Accent, Badge, Image string
+	}{
+		{"industrial_world", "Industrial World", "Dunia Pabrik PUSRI", "Zona Produksi Amonia & Urea", "#f59e0b", "bg-amber-500", "/assets/maps/map1.webp"},
+		{"agricultural_world", "Agricultural World", "Dunia Pertanian", "Mitra Tani & Ketahanan Pangan", "#22c55e", "bg-emerald-500", "/assets/maps/map2.webp"},
+		{"laboratory_world", "Laboratory World", "Dunia Laboratorium", "Riset, Inovasi & Uji Kualitas", "#8b5cf6", "bg-violet-500", "/assets/maps/map3.webp"},
+		{"distribution_world", "Distribution World", "Dunia Distribusi", "Logistik Pelabuhan & Armada", "#0ea5e9", "bg-sky-500", "/assets/maps/map4.webp"},
+		{"green_environment_world", "Green Environment World", "Dunia Lingkungan & K3", "Keberlanjutan & Keselamatan Kerja", "#10b981", "bg-teal-500", "/assets/maps/map5.webp"},
+	}
+	for _, m := range maps {
+		_, err := Pool.Exec(ctx, `
+			INSERT INTO maps (id, name, title_id, subtitle, description, image_url, accent_color, badge_bg, features, snakes, ladders, is_active)
+			VALUES ($1, $2, $3, $4, '', $5, $6, $7, '[]', '[]', '[]', true)
+			ON CONFLICT (id) DO NOTHING
+		`, m.ID, m.Name, m.TitleID, m.Subtitle, m.Image, m.Accent, m.Badge)
+		if err != nil {
+			return fmt.Errorf("seed map %s: %w", m.ID, err)
+		}
+	}
+
+	characters := []struct {
+		ID, Name, Role, Tagline, Image, Avatar, Accent string
+	}{
+		{"character_01", "Raka (Karyawan)", "Staf Operasional PUSRI", "Teliti, sigap, dan siap mengawal proses produksi.", "/assets/characters/karyawan_pria.webp", "/assets/characters/karyawan_pria_avatar.webp", "#2563eb"},
+		{"character_02", "Nadia (Karyawati)", "Analis Mutu & Riset", "Cermat dalam setiap uji kualitas dan data lapangan.", "/assets/characters/karyawan_wanita.webp", "/assets/characters/karyawan_wanita_avatar.webp", "#7c3aed"},
+		{"character_03", "Bagas (Petani Muda)", "Mitra Tani Modern", "Semangat bertani cerdas demi panen berlimpah.", "/assets/characters/petani_pria.webp", "/assets/characters/petani_pria_avatar.webp", "#16a34a"},
+		{"character_04", "Sari (Petani Kebun)", "Penggiat Agro Lestari", "Merawat tanaman subur bersama pupuk berkualitas.", "/assets/characters/petani_wanita.webp", "/assets/characters/petani_wanita_avatar.webp", "#0d9488"},
+		{"character_05", "Pak Darman (Petani Senior)", "Sesepuh Kelompok Tani", "Kaya pengalaman menjaga kesuburan lahan nusantara.", "/assets/characters/petani_senior.webp", "/assets/characters/petani_senior_avatar.webp", "#ca8a04"},
+		{"character_06", "Dimas (Sekuriti Pria)", "Petugas Keamanan & K3", "Menjaga keamanan kawasan pabrik dan keselamatan kerja.", "/assets/characters/sekuriti_pria.webp", "/assets/characters/sekuriti_pria_avatar.webp", "#dc2626"},
+		{"character_07", "Citra (Sekuriti Wanita)", "Koordinator Safety Patrol", "Disiplin prosedur K3 untuk operasional tanpa celaka.", "/assets/characters/sekuriti_wanita.webp", "/assets/characters/sekuriti_wanita_avatar.webp", "#ea580c"},
+	}
+	for _, c := range characters {
+		_, err := Pool.Exec(ctx, `
+			INSERT INTO characters (id, name, role, tagline, image_url, avatar_url, accent_color, is_active)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+			ON CONFLICT (id) DO NOTHING
+		`, c.ID, c.Name, c.Role, c.Tagline, c.Image, c.Avatar, c.Accent)
+		if err != nil {
+			return fmt.Errorf("seed character %s: %w", c.ID, err)
+		}
+	}
+
+	log.Info().Int("maps", len(maps)).Int("characters", len(characters)).Msg("Maps and characters seeded")
 	return nil
 }

@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"ular-tangga-pusri-backend/config"
 	"ular-tangga-pusri-backend/database"
 	"ular-tangga-pusri-backend/handlers"
@@ -21,8 +22,21 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		// Allow all origins for development
-		return true
+		origin := r.Header.Get("Origin")
+		// Client non-browser (mis. health check/script) tidak mengirim Origin.
+		if origin == "" {
+			return true
+		}
+		u, err := url.Parse(origin)
+		if err != nil || u.Host == "" {
+			return false
+		}
+		// Izinkan same-origin dan localhost untuk development.
+		if u.Host == r.Host {
+			return true
+		}
+		host := u.Hostname()
+		return host == "localhost" || host == "127.0.0.1" || host == "::1"
 	},
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -47,18 +61,23 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to run migrations")
 	}
 
-	// Seed questions
+	// Seed referensi (peta & karakter) dan bank soal
+	if err := database.SeedMapsAndCharacters(); err != nil {
+		log.Error().Err(err).Msg("Failed to seed maps and characters")
+	}
 	if err := database.SeedQuestions(); err != nil {
 		log.Error().Err(err).Msg("Failed to seed questions")
 	}
 
 	// Create WebSocket hub
 	hub := websocket.NewHub()
-	go hub.Run(context.Background())
 
 	// Create handlers
 	roomHandler := handlers.NewRoomHandler(hub)
 	gameHandler := handlers.NewGameHandler(hub)
+	// Host memulai game (RoomHandler), bot dijalankan GameHandler saat giliran
+	// pertama dibuka. Tidak ada import cycle: memakai callback fungsi.
+	roomHandler.SetOnTurnStarted(gameHandler.MaybeTriggerBotTurn)
 
 	// HTTP server
 	mux := http.NewServeMux()
@@ -78,6 +97,7 @@ func main() {
 		}
 
 		client := &websocket.Client{
+			Hub:      hub,
 			Conn:     conn,
 			Send:     make(chan []byte, 256),
 			RoomCode: "",
@@ -103,53 +123,53 @@ func main() {
 		switch msg.Type {
 		// Room management
 		case "CREATE_ROOM":
-			var payload handlers.CreateRoomPayload
+			var payload models.CreateRoomPayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleCreateRoom(client, payload)
 
 		case "JOIN_ROOM":
-			var payload handlers.JoinRoomPayload
+			var payload models.JoinRoomPayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleJoinRoom(client, payload)
 
 		case "SPECTATE_ROOM":
-			var payload handlers.SpectateRoomPayload
+			var payload models.SpectateRoomPayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleSpectateRoom(client, payload)
 
 		case "SET_READY":
-			var payload handlers.SetReadyPayload
+			var payload models.SetReadyPayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleSetReady(client, payload)
 
 		case "START_GAME":
-			var payload handlers.StartGamePayload
+			var payload models.StartGamePayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleStartGame(client, payload)
 
 		case "ADD_BOT":
-			var payload handlers.AddBotPayload
+			var payload models.AddBotPayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleAddBot(client, payload)
 
 		case "CHANGE_MAP":
-			var payload handlers.ChangeMapPayload
+			var payload models.ChangeMapPayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleChangeMap(client, payload)
 
 		case "LEAVE_ROOM":
-			var payload handlers.LeaveRoomPayload
+			var payload models.LeaveRoomPayload
 			json.Unmarshal(msg.Payload, &payload)
 			roomHandler.HandleLeaveRoom(client, payload)
 
 		// Game actions
 		case "ROLL_DICE":
-			var payload handlers.RollDicePayload
+			var payload models.RollDicePayload
 			json.Unmarshal(msg.Payload, &payload)
 			gameHandler.HandleRollDice(client, payload)
 
 		case "SUBMIT_ANSWER":
-			var payload handlers.SubmitAnswerPayload
+			var payload models.SubmitAnswerPayload
 			json.Unmarshal(msg.Payload, &payload)
 			gameHandler.HandleSubmitAnswer(client, payload)
 
@@ -161,6 +181,9 @@ func main() {
 			log.Warn().Str("type", msg.Type).Msg("Unknown message type")
 		}
 	}
+
+	// Hub mulai berjalan setelah semua handler & callback terpasang.
+	go hub.Run(context.Background())
 
 	server := &http.Server{
 		Addr:         cfg.Server.Host + ":" + cfg.Server.Port,

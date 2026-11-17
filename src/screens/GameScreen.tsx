@@ -169,11 +169,6 @@ export function GameScreen() {
   const canRoll = room.status === 'TURN_START' && isMyTurn;
   const canAnswer = room.status === 'QUESTION' && isMyTurn && !room.turn_state.answered_option_id && countdown > 0;
 
-  // Spectator info banner
-  if (isSpectator && myPlayer) {
-    // Spectators still see the board but with a banner
-  }
-
   return (
     <div className="mx-auto max-w-[1600px] px-3 py-5 sm:px-5">
       {/* Spectator banner */}
@@ -237,8 +232,13 @@ export function GameScreen() {
           {/* Turn control strip */}
           <div className="grid gap-3 sm:grid-cols-[auto_1fr]">
             <div className="board-card flex items-center justify-center gap-4 rounded-2xl px-5 py-4">
-              <Dice3D value={lastDiceValue || (room.turn_state.dice_value ?? null)} rolling={rolling} size="lg" />
-              <div className="min-w-[130px]">
+              <Dice3D
+                value={lastDiceValue || (room.turn_state.dice_value ?? null)}
+                rolling={rolling}
+                rollId={room.turn_state.animation_seed}
+                size="lg"
+              />
+              <div className="min-w-0 flex-1 sm:min-w-[130px] sm:flex-none">
                 <div className="font-display text-sm font-bold text-slate-900">
                   {lastDiceValue || room.turn_state.dice_value
                     ? `Dadu: ${lastDiceValue || room.turn_state.dice_value}`

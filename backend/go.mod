@@ -3,6 +3,7 @@ module ular-tangga-pusri-backend
 go 1.23
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/jackc/pgx/v5 v5.5.5
 	github.com/joho/godotenv v1.5.1
@@ -16,7 +17,6 @@ require (
 	github.com/jackc/pgx/v5/pgproto3 v5.5.5 // indirect
 	github.com/jackc/pgx/v5/pgtype v5.5.5 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
-	github.com/rs/zerolog v1.33.0 // indirect
 	github.com/shopspring/decimal v1.3.1 // indirect
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/crypto v0.25.0 // indirect

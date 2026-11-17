@@ -29,7 +29,11 @@ const MANIFEST_URL = '/assets/audio/manifest.json';
 const FALLBACK_MANIFEST: MusicManifest = {
   default: {
     label: 'BGM Utama',
-    src: ['/assets/audio/background-music.wav'],
+    src: [
+      '/assets/audio/background-music.mp3',
+      '/assets/audio/background-music.ogg',
+      '/assets/audio/background-music.wav',
+    ],
     loop: true,
     volume: 0.32,
   },
@@ -58,6 +62,7 @@ class BackgroundMusicEngine {
   private prefs: MusicPrefs = { ...DEFAULT_PREFS };
   private hasStoredPrefs = false;
   private gestureSeen = false;
+  private userInitiated = false;
   private initialized = false;
   private listeners = new Set<() => void>();
 
@@ -80,28 +85,38 @@ class BackgroundMusicEngine {
 
   // === Public API ===
 
-  init(): void {
+  /**
+   * Menyiapkan engine (preferensi + manifest kecil) TANPA mengunduh audio.
+   * Dipanggil sekali saat App mount. File MP3/OGG baru diminta setelah
+   * pengguna berinteraksi (klik/touch) lewat `bindUnlockGestures()`.
+   */
+  prepare(): void {
     if (this.initialized) return;
     this.initialized = true;
     this.loadManifest();
   }
 
+  /** @deprecated Gunakan `prepare()`. */
+  init(): void {
+    this.prepare();
+  }
+
   play(themeId = 'default'): void {
-    this.init();
+    this.prepare();
     this.currentThemeId = themeId;
     const track = this.resolveTrack(themeId);
+    const changed = !this.currentTrack || !this.sameTrack(this.currentTrack, track);
 
-    if (this.currentTrack && this.sameTrack(this.currentTrack, track)) {
-      this.ensureHowl();
-      if (this.prefs.enabled) this.howl?.play();
-      this.update({ trackLabel: track.label });
-      return;
+    if (changed) {
+      this.currentTrack = track;
+      this.sourceIndex = 0;
     }
 
-    this.currentTrack = track;
-    this.sourceIndex = 0;
-    this.ensureHowl();
-    if (this.prefs.enabled && this.gestureSeen) this.howl?.play();
+    // Jangan buat Howl / unduh file sebelum ada gesture dari pengguna.
+    if (this.canAutoplay()) {
+      this.ensureHowl();
+      if (this.prefs.enabled) this.howl?.play();
+    }
     this.update({ trackLabel: track.label });
   }
 
@@ -118,9 +133,10 @@ class BackgroundMusicEngine {
 
   resume(): void {
     this.prefs.enabled = true;
+    this.userInitiated = true;
     this.persistPrefs();
     this.ensureHowl();
-    if (this.gestureSeen) this.howl?.play();
+    if (this.canAutoplay()) this.howl?.play();
     this.update({ enabled: true });
   }
 
@@ -198,19 +214,29 @@ class BackgroundMusicEngine {
     }
   }
 
+  private canAutoplay(): boolean {
+    return this.gestureSeen || this.userInitiated;
+  }
+
   private bindUnlockGestures(): void {
     if (typeof window === 'undefined') return;
     const unlock = () => {
+      const firstGesture = !this.gestureSeen;
       this.gestureSeen = true;
       Howler.ctx?.resume?.().catch(() => {});
-      if (this.prefs.enabled) {
-        this.ensureHowl();
-        this.howl?.play();
+
+      // Baru unduh + putar audio pada gesture pertama (atau saat tombol play
+      // ditekan). Sebelumnya hanya manifest JSON ~200 byte yang diminta.
+      if (firstGesture || this.userInitiated) {
+        if (this.prefs.enabled) {
+          this.ensureHowl();
+          this.howl?.play();
+        }
       }
     };
     const events: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'touchstart'];
     for (const event of events) {
-      window.addEventListener(event, unlock, { passive: true });
+      window.addEventListener(event, unlock, { passive: true, once: true });
     }
   }
 
@@ -232,6 +258,8 @@ class BackgroundMusicEngine {
     } catch (err) {
       this.update({ error: err instanceof Error ? err.message : 'Manifest audio tidak terbaca' });
     } finally {
+      // `play()` aman dipanggil di sini: ia tidak akan membuat Howl sebelum
+      // ada gesture pengguna (lihat `canAutoplay()`).
       this.play(this.currentThemeId);
     }
   }
@@ -247,6 +275,9 @@ class BackgroundMusicEngine {
   }
 
   private ensureHowl(): void {
+    // Jangan pernah memuat file audio sebelum ada gesture pengguna.
+    if (!this.canAutoplay()) return;
+
     const track = this.currentTrack || this.manifest.default;
     if (!this.currentTrack) this.currentTrack = track;
 
@@ -262,11 +293,13 @@ class BackgroundMusicEngine {
       this.loadedSrc = null;
     }
 
-    this.sourceIndex = 0;
+    // Jangan reset sourceIndex di sini: jika sumber sebelumnya gagal dan
+    // sudah beralih ke OGG/WAV, reset akan mengulang MP3 yang gagal terus.
     this.loadSource(track);
   }
 
   private loadSource(track: MusicTrack): void {
+    if (!this.canAutoplay()) return;
     const src = track.src[this.sourceIndex];
     if (!src) {
       this.update({ error: 'File audio tidak ditemukan', loaded: false });

@@ -3,7 +3,6 @@ package websocket
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"sync"
 	"time"
 
@@ -14,30 +13,34 @@ import (
 
 // Hub maintains the set of active clients and broadcasts messages to rooms
 type Hub struct {
-	rooms       map[string]*Room
-	clients     map[*Client]bool
-	broadcast   chan []byte
-	Register    chan *Client
-	Unregister  chan *Client
-	mu          sync.RWMutex
+	rooms         map[string]*Room
+	clients       map[*Client]bool
+	broadcast     chan []byte
+	Register      chan *Client
+	Unregister    chan *Client
+	mu            sync.RWMutex
 	HandleMessage func(client *Client, message []byte)
 }
 
 type Room struct {
-	Code     string
-	Clients  map[*Client]bool
+	Code       string
+	Clients    map[*Client]bool
 	Spectators map[*Client]bool
-	mu       sync.RWMutex
+	mu         sync.RWMutex
 }
 
 type Client struct {
-	Hub      *Hub
-	Conn     *websocket.Conn
-	Send     chan []byte
-	RoomCode string
-	PlayerID string
+	Hub         *Hub
+	Conn        *websocket.Conn
+	Send        chan []byte
+	RoomCode    string
+	PlayerID    string
+	HostToken   string
+	Nickname    string
 	IsSpectator bool
-	mu       sync.Mutex
+
+	mu        sync.Mutex
+	sendClosed bool
 }
 
 func NewHub() *Hub {
@@ -45,9 +48,21 @@ func NewHub() *Hub {
 		rooms:      make(map[string]*Room),
 		clients:    make(map[*Client]bool),
 		broadcast:  make(chan []byte, 256),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		Register:   make(chan *Client, 256),
+		Unregister: make(chan *Client, 256),
 	}
+}
+
+// closeSend menutup channel kirim tepat satu kali (menghindari panic
+// "close of closed channel" jika client sudah dihapus saat broadcast).
+func (c *Client) closeSend() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sendClosed {
+		return
+	}
+	c.sendClosed = true
+	close(c.Send)
 }
 
 func (h *Hub) Run(ctx context.Context) {
@@ -55,6 +70,7 @@ func (h *Hub) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+
 		case client := <-h.Register:
 			h.mu.Lock()
 			h.clients[client] = true
@@ -68,9 +84,9 @@ func (h *Hub) Run(ctx context.Context) {
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				close(client.Send)
 			}
 			h.mu.Unlock()
+			client.closeSend()
 
 			if client.RoomCode != "" {
 				h.leaveRoom(client)
@@ -82,8 +98,9 @@ func (h *Hub) Run(ctx context.Context) {
 				select {
 				case client.Send <- message:
 				default:
-					close(client.Send)
-					delete(h.clients, client)
+					// Salah kirim: tandai agar dihapus setelah loop selesai.
+					// (Menutup channel di sini bisa menimpa WritePump.)
+					go func(c *Client) { h.Unregister <- c }(client)
 				}
 			}
 			h.mu.RUnlock()
@@ -91,7 +108,28 @@ func (h *Hub) Run(ctx context.Context) {
 	}
 }
 
+// JoinRoom / LeaveRoom dipanggil handler setelah RoomCode dan IsSpectator
+// diketahui. Register dari main.go masih terjadi dengan RoomCode kosong,
+// jadi tanpa wrapper ini room tidak pernah terdaftar di h.rooms.
+func (h *Hub) JoinRoom(client *Client) {
+	if client == nil || client.RoomCode == "" {
+		return
+	}
+	h.joinRoom(client)
+}
+
+func (h *Hub) LeaveRoom(client *Client) {
+	if client == nil || client.RoomCode == "" {
+		return
+	}
+	h.leaveRoom(client)
+	// Mencegah leaveRoom dipanggil dua kali oleh Unregister saat disconnect.
+	client.RoomCode = ""
+}
+
 func (h *Hub) joinRoom(client *Client) {
+	// Selalu kunci h.mu lebih dulu, lalu room.mu (urutan konsisten dengan
+	// leaveRoom) supaya room tidak bisa dihapus saat client bergabung.
 	h.mu.Lock()
 	room, exists := h.rooms[client.RoomCode]
 	if !exists {
@@ -102,7 +140,6 @@ func (h *Hub) joinRoom(client *Client) {
 		}
 		h.rooms[client.RoomCode] = room
 	}
-	h.mu.Unlock()
 
 	room.mu.Lock()
 	if client.IsSpectator {
@@ -111,6 +148,7 @@ func (h *Hub) joinRoom(client *Client) {
 		room.Clients[client] = true
 	}
 	room.mu.Unlock()
+	h.mu.Unlock()
 
 	log.Info().
 		Str("room", client.RoomCode).
@@ -120,69 +158,74 @@ func (h *Hub) joinRoom(client *Client) {
 }
 
 func (h *Hub) leaveRoom(client *Client) {
-	h.mu.RLock()
+	h.mu.Lock()
 	room, exists := h.rooms[client.RoomCode]
-	h.mu.RUnlock()
-
 	if !exists {
+		h.mu.Unlock()
 		return
 	}
 
 	room.mu.Lock()
 	delete(room.Clients, client)
 	delete(room.Spectators, client)
+	empty := len(room.Clients) == 0 && len(room.Spectators) == 0
 	room.mu.Unlock()
 
-	// Notify others in room
+	if empty {
+		delete(h.rooms, client.RoomCode)
+	}
+	h.mu.Unlock()
+
+	if empty {
+		return
+	}
+
+	// Satu-satunya sumber PLAYER_LEFT: jangan dikirim ulang dari handler.
 	msg := models.NewMessage(models.MsgPlayerLeft, models.PlayerLeftPayload{
 		RoomCode: client.RoomCode,
 		PlayerID: client.PlayerID,
+		Nickname: client.Nickname,
 	})
 	data, _ := json.Marshal(msg)
 	h.broadcastToRoom(client.RoomCode, data, client)
-
-	// Clean up empty rooms
-	room.mu.RLock()
-	empty := len(room.Clients) == 0 && len(room.Spectators) == 0
-	room.mu.RUnlock()
-
-	if empty {
-		h.mu.Lock()
-		delete(h.rooms, client.RoomCode)
-		h.mu.Unlock()
-	}
 }
 
+// broadcastToRoom mengirim pesan ke pemain DAN pengamat dalam satu room.
 func (h *Hub) broadcastToRoom(roomCode string, message []byte, exclude *Client) {
 	h.mu.RLock()
 	room, exists := h.rooms[roomCode]
-	h.mu.RUnlock()
-
 	if !exists {
+		h.mu.RUnlock()
 		return
 	}
 
 	room.mu.RLock()
-	defer room.mu.RUnlock()
-
+	targets := make([]*Client, 0, len(room.Clients)+len(room.Spectators))
 	for client := range room.Clients {
 		if client != exclude {
-			select {
-			case client.Send <- message:
-			default:
-				close(client.Send)
-				delete(room.Clients, client)
-			}
+			targets = append(targets, client)
 		}
+	}
 	for client := range room.Spectators {
 		if client != exclude {
+			targets = append(targets, client)
+		}
+	}
+	room.mu.RUnlock()
+	h.mu.RUnlock()
+
+	for _, client := range targets {
+		client.mu.Lock()
+		closed := client.sendClosed
+		if !closed {
 			select {
 			case client.Send <- message:
 			default:
-				close(client.Send)
-				delete(room.Spectators, client)
+				// Antrean penuh: lewati pesan ini, jangan tutup channel di sini
+				// karena WritePump yang berwenang menutup koneksi.
 			}
 		}
+		client.mu.Unlock()
 	}
 }
 
@@ -192,13 +235,19 @@ func (h *Hub) BroadcastToRoom(roomCode string, message *models.WSMessage) {
 }
 
 func (h *Hub) SendToClient(client *Client, message *models.WSMessage) {
+	if client == nil {
+		return
+	}
 	data, _ := json.Marshal(message)
 	client.mu.Lock()
 	defer client.mu.Unlock()
+	if client.sendClosed {
+		return
+	}
 	select {
 	case client.Send <- data:
 	default:
-		close(client.Send)
+		// Antrean penuh; jangan tutup channel agar WritePump tetap bisa kirim.
 	}
 }
 

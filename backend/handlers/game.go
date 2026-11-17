@@ -2,19 +2,14 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"math/rand"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
 	"ular-tangga-pusri-backend/database"
 	"ular-tangga-pusri-backend/models"
@@ -27,6 +22,26 @@ type GameHandler struct {
 
 func NewGameHandler(hub *websocket.Hub) *GameHandler {
 	return &GameHandler{hub: hub}
+}
+
+// currentPlayerID mengambil ID pemain yang sedang bergiliran secara aman
+// (kolom di DB nullable sehingga model memakai *string).
+func currentPlayerID(room *models.Room) string {
+	if room == nil || room.CurrentPlayerID == nil {
+		return ""
+	}
+	return *room.CurrentPlayerID
+}
+
+// botClient membuat client internal untuk aksi bot. Perlu Hub dan channel Send
+// agar helper sendError tidak panic saat ada error validasi.
+func (h *GameHandler) botClient(roomCode, playerID string) *websocket.Client {
+	return &websocket.Client{
+		Hub:      h.hub,
+		RoomCode: roomCode,
+		PlayerID: playerID,
+		Send:     make(chan []byte, 8),
+	}
 }
 
 // Map configurations (same as frontend)
@@ -152,7 +167,7 @@ func (h *GameHandler) HandleRollDice(client *websocket.Client, _ models.RollDice
 	}
 
 	room := h.getRoomState(client.RoomCode)
-	if room == nil || room.Status != "TURN_START" || room.CurrentPlayerID != client.PlayerID {
+	if room == nil || room.Status != "TURN_START" || currentPlayerID(room) != client.PlayerID {
 		h.sendError(client, "NOT_YOUR_TURN", "Bukan giliran Anda.")
 		return
 	}
@@ -197,8 +212,8 @@ func (h *GameHandler) HandleRollDice(client *websocket.Client, _ models.RollDice
 
 	// Update room to DICE_ROLLING
 	turnState := room.TurnState
-	turnState.DiceValue = diceValue
-	turnState.AnimationSeed = animationSeed
+	turnState.DiceValue = &diceValue
+	turnState.AnimationSeed = &animationSeed
 	turnState.ActiveQuestion = nil
 	turnState.AnsweredOptionID = nil
 	turnState.LastAnswerResult = nil
@@ -257,7 +272,7 @@ func (h *GameHandler) HandleSubmitAnswer(client *websocket.Client, payload model
 		h.sendError(client, "QUESTION_CLOSED", "Pertanyaan sudah ditutup.")
 		return
 	}
-	if room.CurrentPlayerID != client.PlayerID {
+	if currentPlayerID(room) != client.PlayerID {
 		h.sendError(client, "NOT_YOUR_TURN", "Bukan giliran Anda.")
 		return
 	}
@@ -307,6 +322,12 @@ func (h *GameHandler) HandleSubmitAnswer(client *websocket.Client, payload model
 
 	answerTimeMs := max(150, nowMs-room.TurnState.ActiveQuestion.StartedAtMs)
 	timeLimitMs := int64(room.TurnState.ActiveQuestion.TimeLimitSec) * 1000
+	if timeLimitMs <= 0 {
+		timeLimitMs = int64(room.TurnTimeLimitSec) * 1000
+	}
+	if timeLimitMs <= 0 {
+		timeLimitMs = 1000
+	}
 	isCorrect := payload.OptionID == question.CorrectOptionID
 
 	// PRD 3.5 Scoring Formula
@@ -319,6 +340,7 @@ func (h *GameHandler) HandleSubmitAnswer(client *websocket.Client, payload model
 
 	h.finalizeAnswerAndAdvance(room, question, models.AnswerResult{
 		PlayerID:           client.PlayerID,
+		QuestionID:         question.ID,
 		SelectedOptionID:   payload.OptionID,
 		IsCorrect:          isCorrect,
 		IsTimeout:          false,
@@ -335,6 +357,17 @@ func (h *GameHandler) HandleSubmitAnswer(client *websocket.Client, payload model
 func (h *GameHandler) finalizeAnswerAndAdvance(room *models.Room, question models.Question, outcome models.AnswerResult) {
 	player := h.getPlayerByID(outcome.PlayerID)
 	if player == nil {
+		return
+	}
+
+	// Klaim transisi QUESTION -> ANSWER_RESULT secara atomik. Pemain yang
+	// menjawab lebih dulu menang; timeout/jawaban berikutnya akan kalah di sini
+	// sehingga tidak ada score dobel maupun event ANSWER_RESULT ganda.
+	tag, err := database.Pool.Exec(context.Background(), `
+		UPDATE rooms SET status = 'ANSWER_RESULT', updated_at = $2
+		WHERE code = $1 AND status = 'QUESTION'
+	`, room.Code, time.Now())
+	if err != nil || tag.RowsAffected() != 1 {
 		return
 	}
 
@@ -591,7 +624,7 @@ func (h *GameHandler) advanceToNextTurn(roomCode string) {
 
 	currentIdx := -1
 	for i, p := range players {
-		if p.ID == room.CurrentPlayerID {
+		if p.ID == currentPlayerID(room) {
 			currentIdx = i
 			break
 		}
@@ -617,7 +650,9 @@ func (h *GameHandler) advanceToNextTurn(roomCode string) {
 
 		r.Status = "TURN_START"
 		r.CurrentTurn++
-		r.CurrentPlayerID = nextPlayer.ID
+		// Room.CurrentPlayerID adalah *string (kolom UUID nullable).
+		nextPlayerID := nextPlayer.ID
+		r.CurrentPlayerID = &nextPlayerID
 		r.TurnState = models.TurnState{
 			TurnNumber:       r.CurrentTurn,
 			CurrentPlayerID:  nextPlayer.ID,
@@ -634,13 +669,13 @@ func (h *GameHandler) advanceToNextTurn(roomCode string) {
 
 		_, _ = database.Pool.Exec(context.Background(), `
 			UPDATE rooms SET status = $1, current_turn = $2, current_player_id = $3, turn_state = $4, updated_at = $5 WHERE code = $6
-		`, r.Status, r.CurrentTurn, r.CurrentPlayerID, turnStateJSON, time.Now(), roomCode)
+		`, r.Status, r.CurrentTurn, nextPlayerID, turnStateJSON, time.Now(), roomCode)
 
 		// Broadcast TURN_CHANGED
 		h.hub.BroadcastToRoom(roomCode, models.NewMessage(models.MsgTurnChanged, models.TurnChangedPayload{
 			RoomCode:            roomCode,
 			TurnNumber:          r.CurrentTurn,
-			PreviousPlayerID:    room.CurrentPlayerID,
+			PreviousPlayerID:    currentPlayerID(room),
 			CurrentPlayerID:     nextPlayer.ID,
 			CurrentPlayerNickname: nextPlayer.Nickname,
 		}))
@@ -659,6 +694,11 @@ func (h *GameHandler) advanceToNextTurn(roomCode string) {
 	}()
 }
 
+// MaybeTriggerBotTurn dipanggil dari RoomHandler lewat callback di main.go.
+func (h *GameHandler) MaybeTriggerBotTurn(roomCode string) {
+	h.maybeTriggerBotTurn(roomCode)
+}
+
 func (h *GameHandler) maybeTriggerBotTurn(roomCode string) {
 	room := h.getRoomState(roomCode)
 	if room == nil || room.Status != "TURN_START" || room.CurrentPlayerID == nil {
@@ -671,7 +711,7 @@ func (h *GameHandler) maybeTriggerBotTurn(roomCode string) {
 
 	go func() {
 		time.Sleep(1150 * time.Millisecond)
-		h.HandleRollDice(&websocket.Client{RoomCode: roomCode, PlayerID: player.ID}, models.RollDicePayload{})
+		h.HandleRollDice(h.botClient(roomCode, player.ID), models.RollDicePayload{})
 	}()
 }
 
@@ -701,8 +741,14 @@ func (h *GameHandler) handleQuestionTimeout(roomCode, questionID string) {
 	}
 	json.Unmarshal(optionsJSON, &question.Options)
 
+	playerID := currentPlayerID(room)
+	if playerID == "" {
+		return
+	}
+
 	h.finalizeAnswerAndAdvance(room, question, models.AnswerResult{
-		PlayerID:           *room.CurrentPlayerID,
+		PlayerID:           playerID,
+		QuestionID:         question.ID,
 		SelectedOptionID:   "__TIMEOUT__",
 		IsCorrect:          false,
 		IsTimeout:          true,
@@ -716,31 +762,36 @@ func (h *GameHandler) handleQuestionTimeout(roomCode, questionID string) {
 	})
 }
 
-func (h *GameHandler) botAnswer(roomCode, playerID, questionID string) {
+func (h *GameHandler) botAnswer(roomCode, playerID string, question *models.Question) {
+	if question == nil {
+		return
+	}
 	room := h.getRoomState(roomCode)
 	if room == nil || room.Status != "QUESTION" || room.TurnState.ActiveQuestion == nil {
 		return
 	}
-	if room.TurnState.ActiveQuestion.QuestionID != questionID {
+	if room.TurnState.ActiveQuestion.QuestionID != question.ID {
 		return
 	}
 	if room.TurnState.AnsweredOptionID != nil {
 		return
 	}
 
-	// Get full question
-	var question models.Question
+	// Ambil versi lengkap soal (termasuk opsi) dari database.
+	// Jangan reuse nama `question` — parameter fungsi sudah memakai nama itu.
+	var fullQuestion models.Question
 	var optionsJSON []byte
 	err := database.Pool.QueryRow(context.Background(), `
 		SELECT id, question_text, category, difficulty, time_limit_sec, options, correct_option_id, explanation, is_active, created_at
 		FROM questions WHERE id = $1
-	`, questionID).Scan(
-		&question.ID, &question.QuestionText, &question.Category, &question.Difficulty, &question.TimeLimitSec, &optionsJSON, &question.CorrectOptionID, &question.Explanation, &question.IsActive, &question.CreatedAt,
+	`, question.ID).Scan(
+		&fullQuestion.ID, &fullQuestion.QuestionText, &fullQuestion.Category, &fullQuestion.Difficulty, &fullQuestion.TimeLimitSec, &optionsJSON, &fullQuestion.CorrectOptionID, &fullQuestion.Explanation, &fullQuestion.IsActive, &fullQuestion.CreatedAt,
 	)
 	if err != nil {
 		return
 	}
-	json.Unmarshal(optionsJSON, &question.Options)
+	json.Unmarshal(optionsJSON, &fullQuestion.Options)
+	question = &fullQuestion
 
 	difficulty := question.Difficulty
 	correctRate := max(0.45, 0.85-float64(difficulty)*0.06)
@@ -761,7 +812,7 @@ func (h *GameHandler) botAnswer(roomCode, playerID, questionID string) {
 		}
 	}
 
-	h.HandleSubmitAnswer(&websocket.Client{RoomCode: roomCode, PlayerID: playerID}, models.SubmitAnswerPayload{
+	h.HandleSubmitAnswer(h.botClient(roomCode, playerID), models.SubmitAnswerPayload{
 		QuestionID: question.ID,
 		OptionID:   chosenOpt,
 	})
@@ -845,7 +896,7 @@ func (h *GameHandler) presentQuestion(roomCode string, question *models.Question
 	// Broadcast QUESTION_STARTED
 	h.hub.BroadcastToRoom(roomCode, models.NewMessage(models.MsgQuestionStarted, models.QuestionStartedPayload{
 		RoomCode:  roomCode,
-		PlayerID:  *room.CurrentPlayerID,
+		PlayerID:  currentPlayerID(room),
 		Question:  publicQuestion,
 		DeadlineMs: deadlineMs,
 	}))
@@ -876,11 +927,10 @@ func (h *GameHandler) finishGame(room *models.Room, winnerPlayer *models.Player)
 
 	// Save game result
 	leaderboardJSON, _ := json.Marshal(leaderboard)
-	winnerJSON, _ := json.Marshal(winnerEntry)
 	_, _ = database.Pool.Exec(context.Background(), `
-		INSERT INTO game_results (room_id, room_name, map_id, winner, leaderboard, total_turns, ended_at)
+		INSERT INTO game_results (room_id, room_name, map_id, winner_id, leaderboard, total_turns, ended_at)
 		VALUES ((SELECT id FROM rooms WHERE code = $1), $2, $3, $4, $5, $6, $7)
-	`, room.Code, room.Name, room.MapID, winnerJSON, leaderboardJSON, room.CurrentTurn, result.EndedAt)
+	`, room.Code, room.Name, room.MapID, winnerPlayer.ID, leaderboardJSON, room.CurrentTurn, result.EndedAt)
 
 	// Broadcast GAME_OVER
 	h.hub.BroadcastToRoom(room.Code, models.NewMessage(models.MsgGameOver, models.GameOverPayload{
@@ -931,42 +981,51 @@ func (h *GameHandler) broadcastLeaderboard(roomCode string) {
 
 func (h *GameHandler) getRoomState(code string) *models.Room {
 	var room models.Room
-	var categoriesJSON, turnStateJSON, spectatorIDsJSON []byte
-	var questionSetID *string
-	var currentPlayerID *string
+	var roomID uuid.UUID
+	var categories []string
+	var spectatorIDs []uuid.UUID
+	var turnStateJSON []byte
+	var questionSetID *uuid.UUID
+	var currentPlayerID *uuid.UUID
 
 	err := database.Pool.QueryRow(context.Background(), `
 		SELECT id, code, name, host_token, map_id, status, max_players, question_mode, question_set_id, categories, turn_time_limit_sec, current_turn, current_player_id, turn_state, spectator_ids, created_at, updated_at
 		FROM rooms WHERE code = $1
 	`, code).Scan(
-		&room.ID, &room.Code, &room.Name, &room.HostToken, &room.MapID, &room.Status, &room.MaxPlayers, &room.QuestionMode,
-		&questionSetID, &categoriesJSON, &room.TurnTimeLimitSec, &room.CurrentTurn, &currentPlayerID, &turnStateJSON, &spectatorIDsJSON, &room.CreatedAt, &room.UpdatedAt,
+		&roomID, &room.Code, &room.Name, &room.HostToken, &room.MapID, &room.Status, &room.MaxPlayers, &room.QuestionMode,
+		&questionSetID, &categories, &room.TurnTimeLimitSec, &room.CurrentTurn, &currentPlayerID, &turnStateJSON, &spectatorIDs, &room.CreatedAt, &room.UpdatedAt,
 	)
 	if err != nil {
 		return nil
 	}
 
+	room.ID = roomID.String()
 	if questionSetID != nil {
-		room.QuestionSetID = questionSetID
+		s := questionSetID.String()
+		room.QuestionSetID = &s
 	}
 	if currentPlayerID != nil {
-		room.CurrentPlayerID = currentPlayerID
+		s := currentPlayerID.String()
+		room.CurrentPlayerID = &s
 	}
-	json.Unmarshal(categoriesJSON, &room.Categories)
-	json.Unmarshal(turnStateJSON, &room.TurnState)
-	json.Unmarshal(spectatorIDsJSON, &room.SpectatorIDs)
+	room.Categories = categories
+	room.SpectatorIDs = make([]string, 0, len(spectatorIDs))
+	for _, id := range spectatorIDs {
+		room.SpectatorIDs = append(room.SpectatorIDs, id.String())
+	}
+	if err := json.Unmarshal(turnStateJSON, &room.TurnState); err != nil {
+		log.Warn().Err(err).Str("room", code).Msg("Failed to decode turn_state")
+	}
 
 	return &room
 }
 
 func (h *GameHandler) getPlayerByID(id string) *models.Player {
 	var p models.Player
-	var roomID uuid.UUID
-	var optionsJSON []byte
 	err := database.Pool.QueryRow(context.Background(), `
 		SELECT id, room_id, player_token, nickname, character_id, position, score, correct_answers, total_answer_time_ms, is_ready, is_connected, is_bot, is_spectator, joined_at
 		FROM players WHERE id = $1
-	`, id).Scan(&p.ID, &roomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
+	`, id).Scan(&p.ID, &p.RoomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
 	if err != nil {
 		return nil
 	}
@@ -989,8 +1048,7 @@ func (h *GameHandler) getPlayersByRoomCode(code string) []*models.Player {
 	var players []*models.Player
 	for rows.Next() {
 		var p models.Player
-		var roomID uuid.UUID
-		err := rows.Scan(&p.ID, &roomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
+		err := rows.Scan(&p.ID, &p.RoomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
 		if err == nil {
 			players = append(players, &p)
 		}

@@ -2,16 +2,14 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"log"
-	"math/rand"
+	"math/big"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog/log"
 	"ular-tangga-pusri-backend/database"
 	"ular-tangga-pusri-backend/models"
@@ -19,17 +17,38 @@ import (
 )
 
 type RoomHandler struct {
-	hub *websocket.Hub
+	hub           *websocket.Hub
+	onTurnStarted func(roomCode string)
 }
 
 func NewRoomHandler(hub *websocket.Hub) *RoomHandler {
 	return &RoomHandler{hub: hub}
 }
 
+// SetOnTurnStarted dipanggil dari main.go supaya RoomHandler bisa memberi
+// tahu GameHandler bahwa bot perlu mengambil giliran (tanpa import cycle).
+func (h *RoomHandler) SetOnTurnStarted(fn func(roomCode string)) {
+	h.onTurnStarted = fn
+}
+
+// isHost mengecek apakah client yang terhubung adalah pembuat room.
+// Host dibuat sebagai spectator, jadi tidak boleh mengandalkan !IsSpectator.
+func isHost(client *websocket.Client, room *models.Room) bool {
+	if client == nil || room == nil {
+		return false
+	}
+	return client.HostToken != "" && client.HostToken == room.HostToken
+}
+
 func (h *RoomHandler) HandleCreateRoom(client *websocket.Client, payload models.CreateRoomPayload) {
 	// Validate
 	if strings.TrimSpace(payload.RoomName) == "" {
 		h.sendError(client, "INVALID_NAME", "Nama room wajib diisi.")
+		return
+	}
+	hostNickname := strings.TrimSpace(payload.HostNickname)
+	if hostNickname == "" || len(hostNickname) > 20 {
+		h.sendError(client, "INVALID_HOST", "Nama host wajib diisi (maksimal 20 karakter).")
 		return
 	}
 	if payload.MaxPlayers < 2 || payload.MaxPlayers > 8 {
@@ -85,17 +104,26 @@ func (h *RoomHandler) HandleCreateRoom(client *websocket.Client, payload models.
 
 	// Generate unique 6-digit PIN
 	var code string
+	found := false
 	for attempt := 0; attempt < 20; attempt++ {
-		code = fmt.Sprintf("%06d", rand.Intn(900000)+100000)
+		n, err := rand.Int(rand.Reader, big.NewInt(900000))
+		if err != nil {
+			h.sendError(client, "SERVER_ERROR", "Gagal membuat PIN room. Coba lagi.")
+			return
+		}
+		candidate := fmt.Sprintf("%06d", n.Int64()+100000)
 		var exists bool
 		err = database.Pool.QueryRow(context.Background(),
-			"SELECT EXISTS(SELECT 1 FROM rooms WHERE code = $1)", code).Scan(&exists)
+			"SELECT EXISTS(SELECT 1 FROM rooms WHERE code = $1)", candidate).Scan(&exists)
 		if err == nil && !exists {
+			code = candidate
+			found = true
 			break
 		}
 	}
-	if code == "" {
-		code = fmt.Sprintf("%06d", time.Now().UnixMilli()%1000000)
+	if !found {
+		h.sendError(client, "SERVER_ERROR", "Gagal membuat PIN room. Coba lagi.")
+		return
 	}
 
 	roomID := uuid.New()
@@ -118,12 +146,18 @@ func (h *RoomHandler) HandleCreateRoom(client *websocket.Client, payload models.
 
 	categoriesJSON, _ := json.Marshal(payload.Categories)
 
+	// Kolom UUID nullable tidak boleh diisi string kosong.
+	var questionSetID any
+	if payload.QuestionSetID != "" {
+		questionSetID = payload.QuestionSetID
+	}
+
 	// Create room
 	_, err = database.Pool.Exec(context.Background(), `
 		INSERT INTO rooms (id, code, name, host_token, map_id, status, max_players, question_mode, question_set_id, categories, turn_time_limit_sec, current_turn, current_player_id, turn_state, spectator_ids, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	`, roomID, code, payload.RoomName, hostToken, payload.MapID, "LOBBY", payload.MaxPlayers, payload.QuestionMode,
-		payload.QuestionSetID, categoriesJSON, payload.TurnTimeLimitSec, 0, "", turnStateJSON, "[]", now, now)
+		questionSetID, categoriesJSON, payload.TurnTimeLimitSec, 0, nil, turnStateJSON, []uuid.UUID{}, now, now)
 
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create room")
@@ -137,20 +171,26 @@ func (h *RoomHandler) HandleCreateRoom(client *websocket.Client, payload models.
 	_, err = database.Pool.Exec(context.Background(), `
 		INSERT INTO players (id, room_id, player_token, nickname, character_id, position, score, correct_answers, total_answer_time_ms, is_ready, is_connected, is_bot, is_spectator, joined_at)
 		VALUES ($1, $2, $3, $4, $5, 1, 0, 0, 0, true, true, false, true, $6)
-	`, spectatorID, roomID, spectatorToken, payload.HostNickname, "character_01", now)
+	`, spectatorID, roomID, spectatorToken, hostNickname, "character_01", now)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create host spectator")
+		h.sendError(client, "SERVER_ERROR", "Gagal membuat sesi host.")
+		return
 	}
 
 	// Update room with spectator
 	_, _ = database.Pool.Exec(context.Background(),
 		"UPDATE rooms SET spectator_ids = $1 WHERE id = $2",
-		pgtype.Array{Elements: []interface{}{spectatorID}}, roomID)
+		[]uuid.UUID{spectatorID}, roomID)
 
 	// Set client auth
+	client.Hub = h.hub
 	client.RoomCode = code
 	client.PlayerID = spectatorID.String()
+	client.HostToken = hostToken
+	client.Nickname = hostNickname
 	client.IsSpectator = true
+	h.hub.JoinRoom(client)
 
 	// Get full room state
 	room := h.getRoomState(code)
@@ -162,7 +202,10 @@ func (h *RoomHandler) HandleCreateRoom(client *websocket.Client, payload models.
 		Room:       room,
 		Players:    players,
 		Spectators: spectators,
-		You:        h.findPlayer(players, spectatorID.String()),
+		// Host dibuat sebagai spectator, jadi cari di spectators.
+		You:         h.findPlayer(spectators, spectatorID.String()),
+		HostToken:   room.HostToken,
+		PlayerToken: spectatorToken,
 	}))
 
 	// Broadcast to room (only host for now)
@@ -234,9 +277,12 @@ func (h *RoomHandler) HandleJoinRoom(client *websocket.Client, payload models.Jo
 	}
 
 	// Set client auth
+	client.Hub = h.hub
 	client.RoomCode = payload.RoomCode
 	client.PlayerID = playerID.String()
+	client.Nickname = payload.Nickname
 	client.IsSpectator = false
+	h.hub.JoinRoom(client)
 
 	// Get updated state
 	players = h.getPlayersByRoomCode(payload.RoomCode)
@@ -247,8 +293,9 @@ func (h *RoomHandler) HandleJoinRoom(client *websocket.Client, payload models.Jo
 	h.hub.SendToClient(client, models.NewMessage(models.MsgRoomState, models.RoomStatePayload{
 		Room:       room,
 		Players:    players,
-		Spectators: spectators,
-		You:        h.findPlayer(players, playerID.String()),
+		Spectators:  spectators,
+		You:         h.findPlayer(players, playerID.String()),
+		PlayerToken: playerToken,
 	}))
 
 	// Notify others
@@ -291,9 +338,17 @@ func (h *RoomHandler) HandleSpectateRoom(client *websocket.Client, payload model
 		"UPDATE rooms SET spectator_ids = array_append(spectator_ids, $1) WHERE id = $2 AND NOT $1 = ANY(spectator_ids)",
 		spectatorID, room.ID)
 
+	client.Hub = h.hub
 	client.RoomCode = payload.RoomCode
 	client.PlayerID = spectatorID.String()
+	client.Nickname = nickname
 	client.IsSpectator = true
+	// Host bergabung kembali sebagai pengamat perlu tetap dikenali sebagai host
+	// supaya ADD_BOT / CHANGE_MAP / LEAVE_ROOM tetap bisa dipanggil.
+	if payload.HostToken != "" && payload.HostToken == room.HostToken {
+		client.HostToken = room.HostToken
+	}
+	h.hub.JoinRoom(client)
 
 	players := h.getPlayersByRoomCode(payload.RoomCode)
 	spectators := h.getSpectatorsByRoomCode(payload.RoomCode)
@@ -302,8 +357,9 @@ func (h *RoomHandler) HandleSpectateRoom(client *websocket.Client, payload model
 	h.hub.SendToClient(client, models.NewMessage(models.MsgRoomState, models.RoomStatePayload{
 		Room:       room,
 		Players:    players,
-		Spectators: spectators,
-		You:        h.findPlayer(spectators, spectatorID.String()),
+		Spectators:  spectators,
+		You:         h.findPlayer(spectators, spectatorID.String()),
+		PlayerToken: spectatorToken,
 	}))
 
 	h.broadcastRoomState(payload.RoomCode)
@@ -334,12 +390,19 @@ func (h *RoomHandler) HandleSetReady(client *websocket.Client, payload models.Se
 }
 
 func (h *RoomHandler) HandleStartGame(client *websocket.Client, payload models.StartGamePayload) {
-	if client.RoomCode == "" || client.IsSpectator {
+	if client.RoomCode == "" {
 		return
 	}
 
 	room := h.getRoomState(client.RoomCode)
-	if room == nil || room.HostToken != payload.HostToken {
+	if room == nil {
+		h.sendError(client, "NOT_FOUND", "Room tidak ditemukan.")
+		return
+	}
+	// Host adalah spectator — jangan tolak spectator di sini.
+	authorized := isHost(client, room) ||
+		(client.IsSpectator && payload.HostToken != "" && payload.HostToken == room.HostToken)
+	if !authorized {
 		h.sendError(client, "UNAUTHORIZED", "Hanya host yang dapat memulai.")
 		return
 	}
@@ -401,12 +464,12 @@ func (h *RoomHandler) HandleStartGame(client *websocket.Client, payload models.S
 }
 
 func (h *RoomHandler) HandleAddBot(client *websocket.Client, _ models.AddBotPayload) {
-	if client.RoomCode == "" || client.IsSpectator {
+	if client.RoomCode == "" {
 		return
 	}
 
 	room := h.getRoomState(client.RoomCode)
-	if room == nil || room.Status != "LOBBY" {
+	if room == nil || room.Status != "LOBBY" || !isHost(client, room) {
 		return
 	}
 
@@ -465,12 +528,12 @@ func (h *RoomHandler) HandleAddBot(client *websocket.Client, _ models.AddBotPayl
 }
 
 func (h *RoomHandler) HandleChangeMap(client *websocket.Client, payload models.ChangeMapPayload) {
-	if client.RoomCode == "" || client.IsSpectator {
+	if client.RoomCode == "" {
 		return
 	}
 
 	room := h.getRoomState(client.RoomCode)
-	if room == nil || room.HostToken != "" && room.Status != "LOBBY" {
+	if room == nil || room.Status != "LOBBY" || !isHost(client, room) {
 		return
 	}
 
@@ -496,71 +559,75 @@ func (h *RoomHandler) HandleLeaveRoom(client *websocket.Client, _ models.LeaveRo
 		return
 	}
 
-	room := h.getRoomState(client.RoomCode)
+	roomCode := client.RoomCode
+	room := h.getRoomState(roomCode)
 	if room == nil {
 		return
 	}
 
-	isHost := !client.IsSpectator // Host is spectator but has host_token
-	playerNickname := ""
-	// Get nickname before deleting
-	var nickname string
-	err := database.Pool.QueryRow(context.Background(),
-		"SELECT nickname FROM players WHERE id = $1", client.PlayerID).Scan(&nickname)
-	if err == nil {
-		playerNickname = nickname
-	}
+	// Host adalah spectator, jangan pakai !IsSpectator untuk mendeteksinya.
+	hostLeaving := isHost(client, room)
 
-	// Delete player
+	// Delete player and remove from spectator_ids if applicable
 	_, _ = database.Pool.Exec(context.Background(),
 		"DELETE FROM players WHERE id = $1", client.PlayerID)
+	_, _ = database.Pool.Exec(context.Background(),
+		"UPDATE rooms SET spectator_ids = array_remove(spectator_ids, $1) WHERE code = $2",
+		client.PlayerID, roomCode)
 
 	// If host left, end room or transfer host
-	if isHost {
+	if hostLeaving {
 		// For simplicity, end the room
 		_, _ = database.Pool.Exec(context.Background(),
 			"UPDATE rooms SET status = 'GAME_OVER', updated_at = $1 WHERE code = $2",
-			time.Now(), client.RoomCode)
+			time.Now(), roomCode)
 	}
 
-	// Notify others
-	h.hub.BroadcastToRoom(client.RoomCode, models.NewMessage(models.MsgPlayerLeft, models.PlayerLeftPayload{
-		RoomCode: client.RoomCode,
-		PlayerID: client.PlayerID,
-		Nickname: playerNickname,
-	}))
+	// Satu-satunya PLAYER_LEFT dikirim hub.leaveRoom (juga saat disconnect).
+	h.hub.LeaveRoom(client)
 
-	h.broadcastRoomState(client.RoomCode)
-	log.Info().Str("room", client.RoomCode).Str("player", client.PlayerID).Msg("Player left room")
+	h.broadcastRoomState(roomCode)
+	log.Info().Str("room", roomCode).Str("player", client.PlayerID).Msg("Player left room")
 }
 
 // Helper methods
 func (h *RoomHandler) getRoomState(code string) *models.Room {
 	var room models.Room
-	var categoriesJSON, turnStateJSON, spectatorIDsJSON []byte
-	var questionSetID *string
-	var currentPlayerID *string
+	var roomID uuid.UUID
+	var categories []string
+	var spectatorIDs []uuid.UUID
+	var turnStateJSON []byte
+	var questionSetID *uuid.UUID
+	var currentPlayerID *uuid.UUID
 
 	err := database.Pool.QueryRow(context.Background(), `
 		SELECT id, code, name, host_token, map_id, status, max_players, question_mode, question_set_id, categories, turn_time_limit_sec, current_turn, current_player_id, turn_state, spectator_ids, created_at, updated_at
 		FROM rooms WHERE code = $1
 	`, code).Scan(
-		&room.ID, &room.Code, &room.Name, &room.HostToken, &room.MapID, &room.Status, &room.MaxPlayers, &room.QuestionMode,
-		&questionSetID, &categoriesJSON, &room.TurnTimeLimitSec, &room.CurrentTurn, &currentPlayerID, &turnStateJSON, &spectatorIDsJSON, &room.CreatedAt, &room.UpdatedAt,
+		&roomID, &room.Code, &room.Name, &room.HostToken, &room.MapID, &room.Status, &room.MaxPlayers, &room.QuestionMode,
+		&questionSetID, &categories, &room.TurnTimeLimitSec, &room.CurrentTurn, &currentPlayerID, &turnStateJSON, &spectatorIDs, &room.CreatedAt, &room.UpdatedAt,
 	)
 	if err != nil {
 		return nil
 	}
 
+	room.ID = roomID.String()
 	if questionSetID != nil {
-		room.QuestionSetID = questionSetID
+		s := questionSetID.String()
+		room.QuestionSetID = &s
 	}
 	if currentPlayerID != nil {
-		room.CurrentPlayerID = currentPlayerID
+		s := currentPlayerID.String()
+		room.CurrentPlayerID = &s
 	}
-	json.Unmarshal(categoriesJSON, &room.Categories)
-	json.Unmarshal(turnStateJSON, &room.TurnState)
-	json.Unmarshal(spectatorIDsJSON, &room.SpectatorIDs)
+	room.Categories = categories
+	room.SpectatorIDs = make([]string, 0, len(spectatorIDs))
+	for _, id := range spectatorIDs {
+		room.SpectatorIDs = append(room.SpectatorIDs, id.String())
+	}
+	if err := json.Unmarshal(turnStateJSON, &room.TurnState); err != nil {
+		log.Warn().Err(err).Str("room", code).Msg("Failed to decode turn_state")
+	}
 
 	return &room
 }
@@ -581,8 +648,7 @@ func (h *RoomHandler) getPlayersByRoomCode(code string) []*models.Player {
 	var players []*models.Player
 	for rows.Next() {
 		var p models.Player
-		var roomID uuid.UUID
-		err := rows.Scan(&p.ID, &roomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
+		err := rows.Scan(&p.ID, &p.RoomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
 		if err == nil {
 			players = append(players, &p)
 		}
@@ -603,8 +669,7 @@ func (h *RoomHandler) getPlayers(roomID uuid.UUID) []*models.Player {
 	var players []*models.Player
 	for rows.Next() {
 		var p models.Player
-		var rid uuid.UUID
-		err := rows.Scan(&p.ID, &rid, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
+		err := rows.Scan(&p.ID, &p.RoomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
 		if err == nil {
 			players = append(players, &p)
 		}
@@ -628,8 +693,7 @@ func (h *RoomHandler) getSpectatorsByRoomCode(code string) []*models.Player {
 	var spectators []*models.Player
 	for rows.Next() {
 		var p models.Player
-		var roomID uuid.UUID
-		err := rows.Scan(&p.ID, &roomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
+		err := rows.Scan(&p.ID, &p.RoomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
 		if err == nil {
 			spectators = append(spectators, &p)
 		}
@@ -650,13 +714,59 @@ func (h *RoomHandler) getSpectators(roomID uuid.UUID) []*models.Player {
 	var spectators []*models.Player
 	for rows.Next() {
 		var p models.Player
-		var rid uuid.UUID
-		err := rows.Scan(&p.ID, &rid, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
+		err := rows.Scan(&p.ID, &p.RoomID, &p.PlayerToken, &p.Nickname, &p.CharacterID, &p.Position, &p.Score, &p.CorrectAnswers, &p.TotalAnswerTimeMs, &p.IsReady, &p.IsConnected, &p.IsBot, &p.IsSpectator, &p.JoinedAt)
 		if err == nil {
 			spectators = append(spectators, &p)
 		}
 	}
 	return spectators
+}
+
+// startTurn membuka giliran pertama setelah status STARTING.
+func (h *RoomHandler) startTurn(roomCode, playerID string) {
+	room := h.getRoomState(roomCode)
+	if room == nil || room.Status != "STARTING" {
+		return
+	}
+
+	players := h.getPlayersByRoomCode(roomCode)
+	current := h.findPlayer(players, playerID)
+	if current == nil {
+		return
+	}
+
+	now := time.Now()
+	room.Status = "TURN_START"
+	room.CurrentPlayerID = &playerID
+	room.TurnState = models.TurnState{
+		TurnNumber:       room.CurrentTurn,
+		CurrentPlayerID:  playerID,
+		UsedQuestionIDs:  room.TurnState.UsedQuestionIDs,
+		TurnStartedAtMs:  now.UnixMilli(),
+	}
+	turnStateJSON, _ := json.Marshal(room.TurnState)
+
+	_, err := database.Pool.Exec(context.Background(), `
+		UPDATE rooms SET status = $1, current_player_id = $2, turn_state = $3, updated_at = $4 WHERE code = $5
+	`, room.Status, playerID, turnStateJSON, now, roomCode)
+	if err != nil {
+		log.Error().Err(err).Str("room", roomCode).Msg("Failed to start first turn")
+		return
+	}
+
+	h.hub.BroadcastToRoom(roomCode, models.NewMessage(models.MsgTurnStarted, models.TurnStartedPayload{
+		RoomCode:              roomCode,
+		TurnNumber:            room.CurrentTurn,
+		CurrentPlayerID:       playerID,
+		CurrentPlayerNickname: current.Nickname,
+		Position:              current.Position,
+		TurnStartedAt:         now.UnixMilli(),
+	}))
+
+	if h.onTurnStarted != nil {
+		h.onTurnStarted(roomCode)
+	}
+	log.Info().Str("room", roomCode).Str("player", playerID).Msg("First turn started")
 }
 
 func (h *RoomHandler) findPlayer(players []*models.Player, id string) *models.Player {

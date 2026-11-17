@@ -85,10 +85,10 @@ export function MusicControl() {
         onChange={(e) => backgroundMusic.setVolume(Number(e.target.value))}
         aria-label="Volume musik latar"
         title={`Volume musik: ${Math.round(music.volume * 100)}%`}
-        className="h-1.5 w-20 cursor-pointer accent-amber-400 sm:w-24"
+        className="hidden h-1.5 w-20 cursor-pointer accent-amber-400 sm:block sm:w-24"
       />
 
-      <span className="font-mono-num w-8 text-right text-[10px] font-bold text-slate-400">
+      <span className="font-mono-num hidden w-8 text-right text-[10px] font-bold text-slate-400 sm:block">
         {Math.round(music.volume * 100)}%
       </span>
     </motion.div>

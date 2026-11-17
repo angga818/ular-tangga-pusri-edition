@@ -88,6 +88,7 @@ type JoinRoomPayload struct {
 type SpectateRoomPayload struct {
 	RoomCode  string `json:"room_code"`
 	Nickname  string `json:"nickname,omitempty"`
+	HostToken string `json:"host_token,omitempty"`
 }
 
 type SetReadyPayload struct {
@@ -120,10 +121,14 @@ type PingPayload struct{}
 // ============================================
 
 type RoomStatePayload struct {
-	Room      *Room         `json:"room"`
-	Players   []*Player     `json:"players"`
-	Spectators []*Player    `json:"spectators"`
-	You       *Player       `json:"you,omitempty"`
+	Room       *Room      `json:"room"`
+	Players    []*Player  `json:"players"`
+	Spectators []*Player  `json:"spectators"`
+	You        *Player    `json:"you,omitempty"`
+	// Token dikirim terpisah HANYA ke client yang bersangkutan, tidak ikut
+	// di-broadcast bersama Room/Player.
+	HostToken   string `json:"host_token,omitempty"`
+	PlayerToken string `json:"player_token,omitempty"`
 }
 
 type PlayerJoinedPayload struct {
@@ -198,6 +203,7 @@ type AnswerResultPayload struct {
 type AnswerResult struct {
 	PlayerID           string `json:"player_id"`
 	QuestionID         string `json:"question_id"`
+	SelectedOptionID   string `json:"selected_option_id"`
 	IsCorrect          bool   `json:"is_correct"`
 	IsTimeout          bool   `json:"is_timeout"`
 	CorrectOptionID    string `json:"correct_option_id"`
@@ -295,7 +301,7 @@ type Room struct {
 	ID                 string    `json:"id"`
 	Code               string    `json:"code"`
 	Name               string    `json:"name"`
-	HostToken          string    `json:"host_token"`
+	HostToken          string    `json:"-"`
 	MapID              string    `json:"map_id"`
 	Status             string    `json:"status"`
 	MaxPlayers         int       `json:"max_players"`
@@ -314,7 +320,7 @@ type Room struct {
 type Player struct {
 	ID                  string    `json:"id"`
 	RoomID              string    `json:"room_id"`
-	PlayerToken         string    `json:"player_token"`
+	PlayerToken         string    `json:"-"`
 	Nickname            string    `json:"nickname"`
 	CharacterID         string    `json:"character_id"`
 	Position            int       `json:"position"`

@@ -1,9 +1,13 @@
-import Phaser from 'phaser';
 import { useEffect, useRef, useState } from 'react';
-import { BOARD_HEIGHT, BOARD_WIDTH, BoardScene, BoardSceneData } from '../phaser/BoardScene';
+import type { BoardScene, BoardSceneData } from '../phaser/BoardScene';
+import { BOARD_HEIGHT, BOARD_WIDTH } from '../phaser/boardDimensions';
 
 type PhaserBoardProps = BoardSceneData & { className?: string };
 
+/**
+ * Papan Phaser dimuat secara dinamis. Phaser (~1 MB) TIDAK masuk bundle awal —
+ * ia baru diunduh saat layar Game dibuka.
+ */
 export function PhaserBoard({
   map,
   players,
@@ -24,6 +28,7 @@ export function PhaserBoard({
     status,
   });
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState(false);
 
   dataRef.current = { map, players, currentPlayerId, movementTarget, myPlayerId, status };
 
@@ -32,35 +37,48 @@ export function PhaserBoard({
     if (!host) return;
 
     let disposed = false;
+    let game: import('phaser').Game | null = null;
     setReady(false);
-    const scene = new BoardScene(dataRef.current, (readyScene) => {
-      if (disposed) return;
-      sceneRef.current = readyScene;
-      readyScene.applyData(dataRef.current);
-      setReady(true);
-    });
+    setError(false);
 
-    const game = new Phaser.Game({
-      type: Phaser.AUTO,
-      parent: host,
-      width: BOARD_WIDTH,
-      height: BOARD_HEIGHT,
-      backgroundColor: '#0f233d',
-      scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
-        width: BOARD_WIDTH,
-        height: BOARD_HEIGHT,
-      },
-      render: { antialias: true, pixelArt: false, roundPixels: false },
-      audio: { noAudio: true },
-      scene: [scene],
-    });
+    Promise.all([import('phaser'), import('../phaser/BoardScene')])
+      .then(([phaserModule, sceneModule]) => {
+        if (disposed) return;
+        const Phaser = phaserModule.default;
+        const BoardSceneCtor = sceneModule.BoardScene;
+
+        const scene = new BoardSceneCtor(dataRef.current, (readyScene) => {
+          if (disposed) return;
+          sceneRef.current = readyScene;
+          readyScene.applyData(dataRef.current);
+          setReady(true);
+        });
+
+        game = new Phaser.Game({
+          type: Phaser.AUTO,
+          parent: host,
+          width: BOARD_WIDTH,
+          height: BOARD_HEIGHT,
+          backgroundColor: '#0f233d',
+          scale: {
+            mode: Phaser.Scale.FIT,
+            autoCenter: Phaser.Scale.CENTER_BOTH,
+            width: BOARD_WIDTH,
+            height: BOARD_HEIGHT,
+          },
+          render: { antialias: true, pixelArt: false, roundPixels: false },
+          audio: { noAudio: true },
+          scene: [scene],
+        });
+      })
+      .catch(() => {
+        if (!disposed) setError(true);
+      });
 
     return () => {
       disposed = true;
       sceneRef.current = null;
-      game.destroy(true);
+      game?.destroy(true);
     };
   }, [map.id]);
 
@@ -81,9 +99,14 @@ export function PhaserBoard({
       className={`relative w-full select-none overflow-hidden rounded-xl border-[3px] border-amber-900/70 bg-[#0f233d] shadow-[0_16px_40px_-12px_rgba(0,0,0,.6)] ${className}`}
       style={{ aspectRatio: `${BOARD_WIDTH} / ${BOARD_HEIGHT}` }}
     >
-      {!ready && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/70 text-xs font-bold text-amber-200">
+      {!ready && !error && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/70 px-4 text-center text-xs font-bold text-amber-200">
           Menyiapkan papan interaktif…
+        </div>
+      )}
+      {error && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-900/85 px-4 text-center text-xs font-bold text-rose-200">
+          Papan interaktif gagal dimuat. Muat ulang halaman untuk mencoba lagi.
         </div>
       )}
     </div>
