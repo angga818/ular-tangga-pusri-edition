@@ -8,6 +8,13 @@ import { gameServer } from '../engine/gameServer';
 import { soundFx } from '../utils/soundFx';
 import { useGameStore } from '../store/gameStore';
 import { LeaderboardEntry } from '../types/game';
+import {
+  cardVariants,
+  cardTransition,
+  staggerContainer as staggerVariants,
+  staggerItem as itemVariants,
+  pageVariants,
+} from '../utils/animations';
 
 export function ResultScreen() {
   const { gameResult, room, auth, setScreen, syncResult, resetSession, pushToast } = useGameStore();
@@ -30,12 +37,21 @@ export function ResultScreen() {
   const result = gameResult || (room ? gameServer.getGameResult(room.code) : null);
   if (!result || !auth) {
     return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-white">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-white"
+      >
         <p>Hasil permainan belum tersedia.</p>
-        <button onClick={() => setScreen('menu')} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-900">
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => setScreen('menu')}
+          className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-slate-900"
+        >
           Kembali ke Menu
-        </button>
-      </div>
+        </motion.button>
+      </motion.div>
     );
   }
 
@@ -57,18 +73,25 @@ export function ResultScreen() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-7 sm:px-6">
+    <motion.div
+      initial="initial"
+      animate="animate"
+      variants={pageVariants}
+      className="mx-auto max-w-6xl px-4 py-7 sm:px-6"
+    >
       <ScreenHeader
         eyebrow="Game Over / Rekap Hasil"
         title="Permainan Selesai!"
         subtitle={`Room: ${result.room_name} · Tema: ${map.name} · Total giliran: ${result.total_turns}`}
         right={
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={resetSession}
             className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700"
           >
             <Home size={14} /> Menu Utama
-          </button>
+          </motion.button>
         }
       />
 
@@ -113,12 +136,29 @@ export function ResultScreen() {
       </motion.section>
 
       {/* Podium */}
-      <section className="mb-6 rounded-2xl border border-white/10 bg-slate-900/50 p-5 backdrop-blur">
-        <h3 className="mb-5 flex items-center gap-2 font-display text-lg font-bold text-white">
-          <Award size={20} className="text-amber-300" /> Podium Tiga Besar
-        </h3>
-        <div className="flex items-end justify-center gap-2 sm:gap-5">
-          {[podium[1], podium[0], podium[2]].filter(Boolean).map((p, idx) => {
+      <motion.section
+        variants={cardVariants}
+        initial="initial"
+        animate="animate"
+        transition={cardTransition}
+        className="mb-6 rounded-2xl border border-white/10 bg-slate-900/50 p-5 backdrop-blur"
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          className="mb-5 flex items-center gap-2 font-display text-lg font-bold text-white"
+        >
+          <motion.span whileHover={{ scale: 1.1, rotate: 3 }} transition={{ duration: 0.3 }}><Award size={20} className="text-amber-300" /></motion.span>
+          Podium Tiga Besar
+        </motion.div>
+        <motion.div
+          variants={staggerVariants}
+          initial="initial"
+          animate="animate"
+          className="flex items-end justify-center gap-2 sm:gap-5"
+        >
+          {[podium[1], podium[0], podium[2]].filter(Boolean).map((p) => {
             const rank = p.rank;
             const heights = ['h-24 sm:h-32', 'h-36 sm:h-44', 'h-20 sm:h-28'];
             const height = heights[rank - 1] || 'h-20';
@@ -131,38 +171,70 @@ export function ResultScreen() {
             return (
               <motion.div
                 key={p.player_id}
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 * idx }}
+                variants={itemVariants}
                 className="flex w-28 flex-col items-center sm:w-40"
               >
-                {rank === 1 && <div className="mb-1 text-2xl">👑</div>}
+                {rank === 1 && <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mb-1 text-2xl">👑</motion.div>}
                 <CharacterFigure characterId={p.character_id} height={rank === 1 ? 84 : 68} />
-                <div className="mt-1.5 max-w-full truncate text-center text-xs font-extrabold text-white">{p.nickname}</div>
-                <div className="font-mono-num text-[10px] text-amber-200">{p.score.toLocaleString('id-ID')} poin</div>
-                <div className={`mt-2 flex w-full items-start justify-center rounded-t-xl bg-gradient-to-b ${colors} px-2 pt-3 ${height}`}>
+                <motion.div
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1, duration: 0.3 }}
+                  className="mt-1.5 max-w-full truncate text-center text-xs font-extrabold text-white"
+                >
+                  {p.nickname}
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 20 }}
+                  className="font-mono-num text-[10px] text-amber-200"
+                >
+                  {p.score.toLocaleString('id-ID')} poin
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15, duration: 0.4 }}
+                  className={`mt-2 flex w-full items-start justify-center rounded-t-xl bg-gradient-to-b ${colors} px-2 pt-3 ${height}`}
+                >
                   <span className="font-display text-3xl font-bold text-white/90">#{rank}</span>
-                </div>
+                </motion.div>
               </motion.div>
             );
           })}
-        </div>
-      </section>
+        </motion.div>
+      </motion.section>
 
       {/* Full leaderboard */}
-      <section className="board-card overflow-hidden rounded-2xl">
-        <div className="border-b border-slate-200 px-5 py-4">
+      <motion.section
+        variants={cardVariants}
+        initial="initial"
+        animate="animate"
+        transition={cardTransition}
+        className="board-card overflow-hidden rounded-2xl"
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          className="border-b border-slate-200 px-5 py-4"
+        >
           <h3 className="font-display text-lg font-bold text-slate-900">Leaderboard Lengkap</h3>
           <p className="text-[11px] text-slate-500">
             Diurutkan berdasarkan skor, jumlah jawaban benar, lalu total waktu menjawab.
           </p>
-        </div>
-        <div className="divide-y divide-slate-100">
+        </motion.div>
+        <motion.div
+          variants={staggerVariants}
+          initial="initial"
+          animate="animate"
+          className="divide-y divide-slate-100"
+        >
           {result.leaderboard.map((entry) => (
             <motion.div
               key={entry.player_id}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
+              variants={itemVariants}
               className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5"
             >
               <span
@@ -201,25 +273,38 @@ export function ResultScreen() {
               </div>
             </motion.div>
           ))}
-        </div>
-        <div className="flex flex-wrap gap-3 bg-slate-50 px-5 py-4">
-          <button
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2, duration: 0.3 }}
+          className="flex flex-wrap gap-3 bg-slate-50 px-5 py-4"
+        >
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={handleRematch}
             className="board-btn-primary inline-flex items-center gap-2 rounded-xl bg-gradient-to-b from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-extrabold text-slate-900"
           >
             <RotateCcw size={16} /> Main Lagi
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={resetSession}
             className="board-btn-navy inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-5 py-2.5 text-sm font-extrabold text-white"
           >
-            Kembali ke Menu <ArrowRight size={16} />
-          </button>
-          <div className="ml-auto self-center text-[10px] text-slate-500">
+            Kembali ke Menu <motion.span whileHover={{ x: 4 }}><ArrowRight size={16} /></motion.span>
+          </motion.button>
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="ml-auto self-center text-[10px] text-slate-500"
+          >
             Hasil tersimpan di database SQL lokal dengan kode room <strong>{result.room_code}</strong>.
-          </div>
-        </div>
-      </section>
-    </div>
+          </motion.div>
+        </motion.div>
+      </motion.section>
+    </motion.div>
   );
 }

@@ -3,6 +3,14 @@ import { Check, Copy, Loader2, X } from 'lucide-react';
 import { ReactNode, useEffect, useState } from 'react';
 import { CHARACTERS, MAP_THEMES } from '../data/mapsAndChars';
 import { Player } from '../types/game';
+import {
+  cardVariants,
+  cardTransition,
+  characterEntranceVariants,
+  characterEntranceTransition,
+  toastVariants,
+  toastTransition,
+} from '../utils/animations';
 
 export function getChar(id: string) {
   return CHARACTERS.find((c) => c.id === id) || CHARACTERS[0];
@@ -33,7 +41,12 @@ export function PlayerAvatar({
       ? 'w-16 h-16'
       : 'w-20 h-20';
   return (
-    <div
+    <motion.div
+      variants={cardVariants}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      transition={cardTransition}
       className={`relative shrink-0 rounded-full overflow-hidden bg-slate-100 ${sizeClass} ${
         showRing ? 'ring-2 ring-white shadow-md' : ''
       } ${className}`}
@@ -46,7 +59,7 @@ export function PlayerAvatar({
           OFF
         </span>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -54,10 +67,12 @@ export function CharacterAvatar({
   characterId,
   size = 'md',
   className = '',
+  animated = true,
 }: {
   characterId: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
+  animated?: boolean;
 }) {
   const char = getChar(characterId);
   const sizeClass =
@@ -69,12 +84,17 @@ export function CharacterAvatar({
       ? 'w-16 h-16'
       : 'w-20 h-20';
   return (
-    <div
+    <motion.div
+      variants={animated ? cardVariants : undefined}
+      initial={animated ? 'initial' : undefined}
+      animate={animated ? 'animate' : undefined}
+      exit={animated ? 'exit' : undefined}
+      transition={animated ? cardTransition : undefined}
       className={`relative shrink-0 rounded-full overflow-hidden bg-slate-100 ${sizeClass} ring-2 ring-white shadow-md ${className}`}
       style={{ borderBottom: `3px solid ${char.accent_color}` }}
     >
       <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover object-top" />
-    </div>
+    </motion.div>
   );
 }
 
@@ -83,15 +103,21 @@ export function CharacterFigure({
   height = 80,
   className = '',
   bob = true,
+  animated = true,
 }: {
   characterId: string;
   height?: number;
   className?: string;
   bob?: boolean;
+  animated?: boolean;
 }) {
   const char = getChar(characterId);
   return (
-    <div
+    <motion.div
+      variants={animated ? characterEntranceVariants : undefined}
+      initial={animated ? 'initial' : undefined}
+      animate={animated ? 'animate' : undefined}
+      transition={animated ? characterEntranceTransition : undefined}
       className={`relative inline-flex items-end justify-center ${className}`}
       style={{ height }}
       title={char.name}
@@ -106,11 +132,11 @@ export function CharacterFigure({
         alt={char.name}
         className="relative z-[1] h-full w-auto max-w-none select-none object-contain object-bottom"
         style={{ filter: `drop-shadow(0 6px 5px rgba(2, 6, 23, 0.5))` }}
-        animate={bob ? { y: [0, -3, 0] } : { y: 0 }}
-        transition={{ duration: 2.1, repeat: bob ? Infinity : 0, ease: 'easeInOut' }}
+        animate={animated && bob ? { y: [0, -4, 0] } : { y: 0 }}
+        transition={animated && bob ? { duration: 2.2, repeat: Infinity, ease: 'easeInOut' } : undefined}
         draggable={false}
       />
-    </div>
+    </motion.div>
   );
 }
 
@@ -118,10 +144,12 @@ export function Pill({
   children,
   tone = 'slate',
   className = '',
+  animated = true,
 }: {
   children: ReactNode;
   tone?: 'amber' | 'emerald' | 'sky' | 'rose' | 'slate' | 'violet';
   className?: string;
+  animated?: boolean;
 }) {
   const toneClass = {
     amber: 'bg-amber-100 text-amber-800 border-amber-300',
@@ -132,11 +160,17 @@ export function Pill({
     violet: 'bg-violet-100 text-violet-800 border-violet-300',
   }[tone];
   return (
-    <span
+    <motion.span
+      variants={animated ? cardVariants : undefined}
+      initial={animated ? 'initial' : undefined}
+      animate={animated ? 'animate' : undefined}
+      transition={animated ? cardTransition : undefined}
       className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-extrabold uppercase tracking-wide ${toneClass} ${className}`}
+      whileHover={animated ? { scale: 1.02 } : undefined}
+      whileTap={animated ? { scale: 0.98 } : undefined}
     >
       {children}
-    </span>
+    </motion.span>
   );
 }
 
@@ -153,7 +187,7 @@ export function DifficultyBadge({ difficulty }: { difficulty: number }) {
 export function CopyPinButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
+    <motion.button
       type="button"
       onClick={() => {
         navigator.clipboard.writeText(code).then(() => {
@@ -161,11 +195,33 @@ export function CopyPinButton({ code }: { code: string }) {
           window.setTimeout(() => setCopied(false), 1800);
         });
       }}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 active:translate-y-0.5 transition"
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition"
     >
-      {copied ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
-      {copied ? 'Tersalin!' : 'Salin PIN'}
-    </button>
+      <AnimatePresence mode="wait">
+        {copied ? (
+          <motion.div key="copied" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.5 }}>
+            <Check size={14} className="text-emerald-600" />
+          </motion.div>
+        ) : (
+          <motion.div key="copy" initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.5 }}>
+            <Copy size={14} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence mode="wait">
+        {copied ? (
+          <motion.span key="copied-text" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }}>
+            Tersalin!
+          </motion.span>
+        ) : (
+          <motion.span key="copy-text" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }}>
+            Salin PIN
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </motion.button>
   );
 }
 
@@ -187,9 +243,11 @@ export function ToastHost({
       {toast && (
         <motion.div
           key={toast.id}
-          initial={{ opacity: 0, y: -24, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -16, scale: 0.96 }}
+          variants={toastVariants}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          transition={toastTransition}
           className={`fixed left-1/2 top-5 z-[100] flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold shadow-2xl backdrop-blur ${
             toast.tone === 'error'
               ? 'border-rose-300 bg-rose-50 text-rose-800'
@@ -199,9 +257,15 @@ export function ToastHost({
           }`}
         >
           <span>{toast.message}</span>
-          <button onClick={onClose} className="opacity-60 hover:opacity-100" aria-label="Tutup notifikasi">
+          <motion.button
+            onClick={onClose}
+            className="opacity-60 hover:opacity-100"
+            aria-label="Tutup notifikasi"
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+          >
             <X size={16} />
-          </button>
+          </motion.button>
         </motion.div>
       )}
     </AnimatePresence>
@@ -226,26 +290,60 @@ export function ScreenHeader({
   right?: ReactNode;
 }) {
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+    <motion.div
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: 'easeOut' }}
+      className="mb-5 flex flex-wrap items-end justify-between gap-3"
+    >
       <div>
-        <div className="mb-1 flex items-center gap-2">
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          className="mb-1 flex items-center gap-2"
+        >
           {onBack && (
-            <button
+            <motion.button
               onClick={onBack}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               className="mr-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
             >
               ← Kembali
-            </button>
+            </motion.button>
           )}
           <span className="font-mono-num text-[11px] font-bold uppercase tracking-[0.2em] text-amber-700">
             {eyebrow}
           </span>
-        </div>
-        <h1 className="font-display text-3xl font-bold tracking-tight text-white sm:text-4xl">{title}</h1>
-        {subtitle && <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-300">{subtitle}</p>}
+        </motion.div>
+        <motion.h1
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15, duration: 0.4 }}
+          className="font-display text-3xl font-bold tracking-tight text-white sm:text-4xl"
+        >
+          {title}
+        </motion.h1>
+        {subtitle && (
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.3 }}
+            className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-300"
+          >
+            {subtitle}
+          </motion.p>
+        )}
       </div>
-      {right}
-    </div>
+      <motion.div
+        initial={{ opacity: 0, x: 10 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 0.25, duration: 0.3 }}
+      >
+        {right}
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -261,9 +359,18 @@ export function ConnectionDot({ status }: { status: 'offline' | 'connecting' | '
   const label =
     status === 'online' ? 'Terhubung' : status === 'connecting' ? 'Menghubungkan' : status === 'reconnecting' ? 'Sinkronisasi' : 'Terputus';
   return (
-    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-300">
-      <span className={`h-2 w-2 rounded-full ${color} shadow-[0_0_8px_${color}]`} />
+    <motion.span
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-300"
+    >
+      <motion.span
+        className={`h-2 w-2 rounded-full ${color} shadow-[0_0_8px_${color}]`}
+        animate={status === 'online' || status === 'connecting' || status === 'reconnecting' ? { scale: [1, 1.3, 1] } : undefined}
+        transition={status === 'online' || status === 'connecting' || status === 'reconnecting' ? { duration: 1.5, repeat: Infinity, ease: 'easeInOut' } : undefined}
+      />
       {label}
-    </span>
+    </motion.span>
   );
 }

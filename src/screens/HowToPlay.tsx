@@ -16,12 +16,28 @@ import {
 import { CHARACTERS, MAP_THEMES } from '../data/mapsAndChars';
 import { CharacterFigure, ScreenHeader } from '../components/ui';
 import { useGameStore } from '../store/gameStore';
+import {
+  staggerContainer,
+  staggerItem,
+  cardVariants,
+  cardTransition,
+  gridStaggerVariants,
+  gridItemVariants,
+  pageVariants,
+  pageTransition,
+} from '../utils/animations';
 
 export function HowToPlay() {
   const setScreen = useGameStore((s) => s.setScreen);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-7 sm:px-6">
+    <motion.div
+      variants={pageVariants}
+      initial="initial"
+      animate="animate"
+      transition={pageTransition}
+      className="mx-auto max-w-5xl px-4 py-7 sm:px-6"
+    >
       <ScreenHeader
         eyebrow="Panduan / How to Play"
         title="Cara Bermain"
@@ -29,20 +45,41 @@ export function HowToPlay() {
         onBack={() => setScreen('menu')}
       />
 
-      <section className="board-card mb-6 rounded-2xl p-5 sm:p-7">
-        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
-          <Target size={20} className="text-amber-700" />
+      <motion.section
+        variants={cardVariants}
+        initial="initial"
+        animate="animate"
+        transition={cardTransition}
+        className="board-card mb-6 rounded-2xl p-5 sm:p-7"
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          className="flex items-center gap-2 border-b border-slate-200 pb-3"
+        >
+          <motion.span whileHover={{ scale: 1.1, rotate: 3 }} transition={{ duration: 0.3 }}><Target size={20} className="text-amber-700" /></motion.span>
           <h2 className="font-display text-xl font-bold text-slate-900">Tujuan Permainan</h2>
-        </div>
-        <p className="mt-3 text-sm leading-relaxed text-slate-700">
+        </motion.div>
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15, duration: 0.3 }}
+          className="mt-3 text-sm leading-relaxed text-slate-700"
+        >
           Jadilah pemain pertama yang tiba tepat di <strong>kotak 100</strong>. Setiap giliran, kamu melempar dadu lalu
           menjawab pertanyaan sesuai tingkat kesulitan angka dadu. Hanya jawaban benar yang membuat karaktermu bergerak.
           Di sepanjang jalan, kamu bisa menemukan <strong className="text-emerald-700">tangga</strong> yang membantu
           melonjak naik atau <strong className="text-rose-700">ular</strong> yang membuatmu turun ke kotak sebelumnya.
-        </p>
-      </section>
+        </motion.p>
+      </motion.section>
 
-      <div className="grid gap-5 md:grid-cols-2">
+      <motion.div
+        variants={gridStaggerVariants}
+        initial="initial"
+        animate="animate"
+        className="grid gap-5 md:grid-cols-2"
+      >
         {[
           {
             icon: Users,
@@ -71,28 +108,61 @@ export function HowToPlay() {
         ].map((step, idx) => (
           <motion.section
             key={step.title}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: idx * 0.08 }}
+            variants={cardVariants}
+            initial="initial"
+            animate="animate"
+            transition={cardTransition}
             className="board-card rounded-2xl p-5"
           >
-            <div className="mb-3 flex items-center gap-3">
-              <span className={`flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 ${step.tone}`}>
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: idx * 0.02 + 0.1, duration: 0.3 }}
+              className="mb-3 flex items-center gap-3"
+            >
+              <motion.span
+                whileHover={{ scale: 1.1, rotate: 3 }}
+                transition={{ duration: 0.3 }}
+                className={`flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 ${step.tone}`}
+              >
                 <step.icon size={20} />
-              </span>
+              </motion.span>
               <h3 className="font-display text-base font-bold text-slate-900">{step.title}</h3>
-            </div>
-            <p className="text-xs leading-relaxed text-slate-600">{step.body}</p>
+            </motion.div>
+            <motion.p
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.02 + 0.15, duration: 0.3 }}
+              className="text-xs leading-relaxed text-slate-600"
+            >
+              {step.body}
+            </motion.p>
           </motion.section>
         ))}
-      </div>
+      </motion.div>
 
       {/* Difficulty table */}
-      <section className="board-card mt-6 overflow-hidden rounded-2xl">
-        <div className="border-b border-slate-200 px-5 py-4">
+      <motion.section
+        variants={cardVariants}
+        initial="initial"
+        animate="animate"
+        transition={cardTransition}
+        className="board-card mt-6 overflow-hidden rounded-2xl"
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          className="border-b border-slate-200 px-5 py-4"
+        >
           <h2 className="font-display text-lg font-bold text-slate-900">Hubungan Dadu, Kesulitan & Poin</h2>
-        </div>
-        <div className="overflow-x-auto">
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15, duration: 0.3 }}
+          className="overflow-x-auto"
+        >
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-100 text-slate-600">
               <tr>
@@ -103,7 +173,12 @@ export function HowToPlay() {
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <motion.tbody
+              variants={staggerContainer}
+              initial="initial"
+              animate="animate"
+              className="divide-y divide-slate-100"
+            >
               {[
                 [1, 'Sangat Mudah', 1, '1.0×'],
                 [2, 'Mudah', 2, '1.2×'],
@@ -112,93 +187,220 @@ export function HowToPlay() {
                 [5, 'Sulit', 5, '1.8×'],
                 [6, 'Sangat Sulit', 6, '2.0×'],
               ].map(([dice, label, steps, mult]) => (
-                <tr key={dice} className="hover:bg-slate-50">
+                <motion.tr
+                  key={dice}
+                  variants={staggerItem}
+                  className="hover:bg-slate-50"
+                >
                   <td className="font-mono-num px-4 py-2.5 font-bold text-slate-900">{dice}</td>
                   <td className="px-4 py-2.5 text-slate-700">{label}</td>
                   <td className="px-4 py-2.5 text-slate-700">{steps} kotak</td>
                   <td className="font-mono-num px-4 py-2.5 font-bold text-amber-700">{mult}</td>
-                </tr>
+                </motion.tr>
               ))}
-            </tbody>
+            </motion.tbody>
           </table>
-        </div>
-        <div className="bg-slate-50 px-5 py-3 text-[10px] leading-relaxed text-slate-500">
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2, duration: 0.3 }}
+          className="bg-slate-50 px-5 py-3 text-[10px] leading-relaxed text-slate-500"
+        >
           Rumus skor: <span className="font-mono-num">points = round(1000 × (1 − waktu_jawab/batas_waktu) × multiplier)</span>.
           Faktor waktu dibatasi 0–1. Jawaban salah atau tidak dijawab mendapat 0 poin.
-        </div>
-      </section>
+        </motion.div>
+      </motion.section>
 
       {/* Themes & characters */}
-      <div className="mt-6 grid gap-5 md:grid-cols-2">
-        <section className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur">
-          <div className="mb-3 flex items-center gap-2">
-            <Sparkles size={18} className="text-amber-300" />
+      <motion.div
+        variants={gridStaggerVariants}
+        initial="initial"
+        animate="animate"
+        className="mt-6 grid gap-5 md:grid-cols-2"
+      >
+        <motion.section
+          variants={cardVariants}
+          initial="initial"
+          animate="animate"
+          transition={cardTransition}
+          className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur"
+        >
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.1, duration: 0.3 }}
+            className="mb-3 flex items-center gap-2"
+          >
+            <motion.span whileHover={{ scale: 1.1, rotate: 3 }} transition={{ duration: 0.3 }}><Sparkles size={18} className="text-amber-300" /></motion.span>
             <h2 className="font-display text-base font-bold text-white">Lima Tema Peta</h2>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
+          </motion.div>
+          <motion.div
+            variants={gridStaggerVariants}
+            initial="initial"
+            animate="animate"
+            className="grid grid-cols-2 gap-2"
+          >
             {MAP_THEMES.map((m) => (
-              <div key={m.id} className="overflow-hidden rounded-lg border border-white/10 bg-slate-800">
-                <img src={m.image_url} alt={m.name} className="h-16 w-full object-cover object-center" />
-                <div className="px-2 py-1.5">
+              <motion.div
+                key={m.id}
+                variants={gridItemVariants}
+                whileHover={{ y: -3, scale: 1.02 }}
+                className="overflow-hidden rounded-lg border border-white/10 bg-slate-800"
+              >
+                <motion.img
+                  src={m.image_url}
+                  alt={m.name}
+                  initial={{ opacity: 0, scale: 1.05 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.4 }}
+                  className="h-16 w-full object-cover object-center"
+                />
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1, duration: 0.3 }}
+                  className="px-2 py-1.5"
+                >
                   <div className="text-[10px] font-bold text-white">{m.titleId}</div>
                   <div className="text-[8px] text-slate-400">{m.ladders.length} tangga · {m.snakes.length} ular</div>
-                </div>
-              </div>
+                </motion.div>
+              </motion.div>
             ))}
-          </div>
-          <p className="mt-3 text-[10px] leading-relaxed text-slate-400">
+          </motion.div>
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.3 }}
+            className="mt-3 text-[10px] leading-relaxed text-slate-400"
+          >
             Semua tema menggunakan aturan yang sama. Hanya identitas visual, dekorasi, dan konfigurasi ular tangga yang
             berbeda.
-          </p>
-        </section>
+          </motion.p>
+        </motion.section>
 
-        <section className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur">
-          <div className="mb-3 flex items-center gap-2">
-            <ShieldCheck size={18} className="text-emerald-300" />
+        <motion.section
+          variants={cardVariants}
+          initial="initial"
+          animate="animate"
+          transition={cardTransition}
+          className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 backdrop-blur"
+        >
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.1, duration: 0.3 }}
+            className="mb-3 flex items-center gap-2"
+          >
+            <motion.span whileHover={{ scale: 1.1, rotate: 3 }} transition={{ duration: 0.3 }}><ShieldCheck size={18} className="text-emerald-300" /></motion.span>
             <h2 className="font-display text-base font-bold text-white">Tujuh Karakter</h2>
-          </div>
-          <div className="grid grid-cols-4 gap-2">
+          </motion.div>
+          <motion.div
+            variants={gridStaggerVariants}
+            initial="initial"
+            animate="animate"
+            className="grid grid-cols-4 gap-2"
+          >
             {CHARACTERS.map((c) => (
-              <div key={c.id} className="text-center">
-                <div className="mx-auto flex h-16 items-end justify-center rounded-t-lg bg-gradient-to-t from-slate-800/80 to-slate-700/20">
+              <motion.div
+                key={c.id}
+                variants={gridItemVariants}
+                whileHover={{ y: -2 }}
+                className="text-center"
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 1.05 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.4 }}
+                  className="mx-auto flex h-16 items-end justify-center rounded-t-lg bg-gradient-to-t from-slate-800/80 to-slate-700/20"
+                >
                   <CharacterFigure characterId={c.id} height={60} />
-                </div>
-                <div className="mt-1 truncate text-[8px] font-bold text-slate-300">{c.name.split(' ')[0]}</div>
-              </div>
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1, duration: 0.3 }}
+                  className="mt-1 truncate text-[8px] font-bold text-slate-300"
+                >
+                  {c.name.split(' ')[0]}
+                </motion.div>
+              </motion.div>
             ))}
-          </div>
-          <p className="mt-3 text-[10px] leading-relaxed text-slate-400">
+          </motion.div>
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.3 }}
+            className="mt-3 text-[10px] leading-relaxed text-slate-400"
+          >
             Asset karakter seluruhnya menggunakan desain yang telah disediakan. Kamu bebas memilih karakter mana pun
             saat bergabung ke room.
-          </p>
-        </section>
-      </div>
+          </motion.p>
+        </motion.section>
+      </motion.div>
 
       {/* FAQ */}
-      <section className="board-card mt-6 rounded-2xl p-5 sm:p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <CircleHelp size={20} className="text-violet-700" />
+      <motion.section
+        variants={cardVariants}
+        initial="initial"
+        animate="animate"
+        transition={cardTransition}
+        className="board-card mt-6 rounded-2xl p-5 sm:p-6"
+      >
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          className="mb-4 flex items-center gap-2"
+        >
+          <motion.span whileHover={{ scale: 1.1, rotate: 3 }} transition={{ duration: 0.3 }}><CircleHelp size={20} className="text-violet-700" /></motion.span>
           <h2 className="font-display text-lg font-bold text-slate-900">Pertanyaan Umum</h2>
-        </div>
-        <div className="space-y-3 text-xs">
+        </motion.div>
+        <motion.div
+          variants={staggerContainer}
+          initial="initial"
+          animate="animate"
+          className="space-y-3 text-xs"
+        >
           {[
             ['Apakah bisa dimainkan sendiri?', 'Ya. Host dapat menambahkan rekan bot di lobby agar permainan langsung berjalan tanpa menunggu pemain lain.'],
             ['Apakah jawaban benar terlihat sebelum menjawab?', 'Tidak. Kunci jawaban hanya ada di database/server dan baru dikirim setelah pemain menjawab atau waktu habis.'],
             ['Apakah tema peta mengubah aturan?', 'Tidak. Tema hanya mengubah tampilan papan, dekorasi, dan posisi ular tangga. Mekanisme permainan identik di semua peta.'],
             ['Bagaimana jika koneksi terputus?', 'Posisi, skor, dan state permainan tetap tersimpan di database. Sistem akan menyinkronkan kembali tampilan saat aplikasi dibuka ulang.'],
           ].map(([q, a]) => (
-            <details key={q} className="group rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <motion.details
+              key={q}
+              variants={staggerItem}
+              className="group rounded-xl border border-slate-200 bg-slate-50 p-3"
+            >
               <summary className="flex cursor-pointer list-none items-center gap-2 font-bold text-slate-800">
                 <BookOpenCheck size={15} className="text-amber-600" /> {q}
-                <ArrowRight size={14} className="ml-auto transition group-open:rotate-90" />
+                <motion.span
+                  animate={{ rotate: 0 }}
+                  className="ml-auto transition duration-300"
+                >
+                  <ArrowRight size={14} />
+                </motion.span>
               </summary>
-              <p className="mt-2 pl-6 leading-relaxed text-slate-600">{a}</p>
-            </details>
+              <motion.p
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-2 pl-6 leading-relaxed text-slate-600"
+              >
+                {a}
+              </motion.p>
+            </motion.details>
           ))}
-        </div>
-      </section>
+        </motion.div>
+      </motion.section>
 
-      <div className="mt-7 flex justify-center">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3, duration: 0.5 }}
+        className="mt-7 flex justify-center"
+      >
         <motion.button
           whileHover={{ scale: 1.03 }}
           whileTap={{ scale: 0.97 }}
@@ -207,11 +409,16 @@ export function HowToPlay() {
         >
           <MousePointerClick size={17} /> Siap Bermain? Buat Room Sekarang
         </motion.button>
-      </div>
+      </motion.div>
 
-      <p className="mt-6 flex items-center justify-center gap-2 text-center text-[10px] text-slate-500">
+      <motion.p
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4, duration: 0.3 }}
+        className="mt-6 flex items-center justify-center gap-2 text-center text-[10px] text-slate-500"
+      >
         <Leaf size={12} /> Dibuat sebagai prototype edukasi interaktif bertema PT Pupuk Sriwidjaja Palembang.
-      </p>
-    </div>
+      </motion.p>
+    </motion.div>
   );
 }

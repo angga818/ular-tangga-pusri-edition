@@ -78,6 +78,21 @@ export function QuestionBank() {
   const [sqlResult, setSqlResult] = useState<unknown>(null);
   const [sqlError, setSqlError] = useState('');
 
+  // Simple animation variants
+  const pageVariants = {
+    initial: { opacity: 0, y: 16 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.35, ease: 'easeOut' },
+  };
+  const staggerVariants = {
+    animate: { transition: { staggerChildren: 0.05, delayChildren: 0.1 } },
+  };
+  const itemVariants = {
+    initial: { opacity: 0, y: 12 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.3, ease: 'easeOut' },
+  };
+
   // Force re-read on version bump
   const questions = useMemo(
     () => sqlGetQuestions({ search, difficulty: difficultyFilter || undefined, category: categoryFilter }),
@@ -169,31 +184,46 @@ export function QuestionBank() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6">
+    <motion.div
+      initial="initial"
+      animate="animate"
+      variants={pageVariants}
+      className="mx-auto max-w-7xl px-4 py-7 sm:px-6"
+    >
       <ScreenHeader
         eyebrow="Admin / Question Bank"
         title="Bank Soal & Database SQL"
         subtitle="Kelola pertanyaan edukasi PUSRI, susun question set, dan jelajahi data melalui query SQL. Seluruh data tersimpan di database SQL lokal (alasql)."
         onBack={() => setScreen('menu')}
         right={
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={exportQuestions}
             className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-700"
           >
             <Download size={14} /> Ekspor JSON
-          </button>
+          </motion.button>
         }
       />
 
       {/* Tabs */}
-      <div className="mb-5 flex flex-wrap gap-2">
+      <motion.div
+        variants={staggerVariants}
+        initial="initial"
+        animate="animate"
+        className="mb-5 flex flex-wrap gap-2"
+      >
         {[
           { key: 'questions' as Tab, icon: BookOpen, label: `Daftar Pertanyaan (${questions.length})` },
           { key: 'sets' as Tab, icon: Layers3, label: `Question Set (${sets.length})` },
           { key: 'sql' as Tab, icon: Code2, label: 'SQL Inspector' },
         ].map((t) => (
-          <button
+          <motion.button
             key={t.key}
+            variants={itemVariants}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => setTab(t.key)}
             className={`inline-flex items-center gap-2 rounded-xl border-2 px-4 py-2 text-xs font-extrabold transition ${
               tab === t.key
@@ -202,9 +232,9 @@ export function QuestionBank() {
             }`}
           >
             <t.icon size={15} /> {t.label}
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
 
       {tab === 'questions' && (
         <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
@@ -683,6 +713,6 @@ export function QuestionBank() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }
